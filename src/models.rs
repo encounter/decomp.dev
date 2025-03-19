@@ -1,8 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use objdiff_core::bindings::report::Report;
+use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
 use serde::Serialize;
+
+use crate::db::UnitKey;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Project {
@@ -11,6 +13,7 @@ pub struct Project {
     pub repo: String,
     pub name: Option<String>,
     pub short_name: Option<String>,
+    pub default_category: Option<String>,
     pub default_version: Option<String>,
     pub platform: Option<String>,
 }
@@ -55,28 +58,81 @@ impl ProjectInfo {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Commit {
     pub sha: String,
+    pub message: Option<String>,
     pub timestamp: DateTime<Utc>,
-}
-
-impl From<&octocrab::models::repos::Commit> for Commit {
-    fn from(commit: &octocrab::models::repos::Commit) -> Self {
-        Self {
-            sha: commit.sha.as_ref().unwrap().clone(),
-            timestamp: commit.author.as_ref().unwrap().date.unwrap(),
-        }
-    }
 }
 
 impl From<&octocrab::models::workflows::HeadCommit> for Commit {
     fn from(commit: &octocrab::models::workflows::HeadCommit) -> Self {
-        Self { sha: commit.id.clone(), timestamp: commit.timestamp }
+        Self {
+            sha: commit.id.clone(),
+            timestamp: commit.timestamp,
+            message: (!commit.message.is_empty()).then(|| commit.message.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReportFile<R> {
+    pub commit: Commit,
+    pub version: String,
+    pub report: R,
+}
+
+pub type CachedReportFile = ReportFile<Arc<CachedReport>>;
+pub type FullReportFile = ReportFile<FullReport>;
+
+#[derive(Debug, Clone)]
+pub struct ReportInner<U> {
+    pub version: u32,
+    pub measures: Measures,
+    pub units: Vec<U>,
+    pub categories: Vec<ReportCategory>,
+}
+
+pub type CachedReport = ReportInner<UnitKey>;
+pub type FullReport = ReportInner<Arc<ReportUnit>>;
+
+impl<U> ReportInner<U> {
+    /// Fetch the measures for a specific category (None for the "all" category)
+    pub fn measures(&self, category: Option<&str>) -> &Measures {
+        if let Some(category) = category {
+            self.categories
+                .iter()
+                .find(|c| c.id == category)
+                .and_then(|c| c.measures.as_ref())
+                .unwrap_or(&self.measures)
+        } else {
+            &self.measures
+        }
+    }
+}
+
+impl FullReport {
+    /// Flatten the report into the standard format
+    pub fn flatten(&self) -> Report {
+        let mut units = Vec::with_capacity(self.units.len());
+        for unit in &self.units {
+            units.push((**unit).clone());
+        }
+        Report {
+            measures: Some(self.measures),
+            units,
+            version: self.version,
+            categories: self.categories.clone(),
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ReportFile {
-    pub project: Project,
-    pub commit: Commit,
-    pub version: String,
-    pub report: Arc<Report>,
+pub struct FrogressMapping {
+    pub frogress_slug: String,
+    pub frogress_version: String,
+    pub frogress_category: String,
+    pub frogress_measure: String,
+    pub project_id: u64,
+    pub project_version: String,
+    pub project_category: String,
+    pub project_category_name: String,
+    pub project_measure: String,
 }

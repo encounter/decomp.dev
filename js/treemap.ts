@@ -1,6 +1,7 @@
 type Unit = {
     name: string;
     fuzzy_match_percent: number;
+    total_code: number;
     color: string;
     x: number;
     y: number;
@@ -22,6 +23,37 @@ const PADDING_W = 10;
 const PADDING_H = 5;
 const MARGIN = 5;
 
+const ellipsize = (ctx: CanvasRenderingContext2D, text: string, width: number) => {
+    const ellipsis = "…";
+    const padding = PADDING_W * 2;
+    let m = ctx.measureText(text);
+    if (m.actualBoundingBoxRight + m.actualBoundingBoxLeft + padding <= width) {
+        return text;
+    }
+    let n = 3;
+    while (true) {
+        const start = text.length / 4 - n / 4;
+        const ellipsized = text.slice(0, start) + ellipsis + text.slice(start + n);
+        m = ctx.measureText(ellipsized);
+        if (m.actualBoundingBoxRight + m.actualBoundingBoxLeft + padding <= width) {
+            return ellipsized;
+        }
+        n++;
+    }
+};
+
+const UNITS = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+
+const formatSize = (value: number): string => {
+    let unit = 0;
+    while (value >= 1000.0 && unit < UNITS.length - 1) {
+        // biome-ignore lint/style/noParameterAssign: don't care
+        value /= 1000.0;
+        unit += 1;
+    }
+    return `${value.toFixed(2)} ${UNITS[unit]}`;
+};
+
 const drawTooltip = (ctx: CanvasRenderingContext2D, unit: Unit, width: number, height: number) => {
     const style = getComputedStyle(ctx.canvas);
     const fontWeight = style.getPropertyValue('--font-weight') || 'normal';
@@ -33,55 +65,67 @@ const drawTooltip = (ctx: CanvasRenderingContext2D, unit: Unit, width: number, h
     ctx.textBaseline = "middle";
 
     const {x, y, w, h} = unitBounds(unit, width, height);
-    const text = `${unit.name} • ${unit.fuzzy_match_percent.toFixed(2)}%`;
+    const text = ellipsize(ctx, `${unit.name} • ${formatSize(unit.total_code)} • ${unit.fuzzy_match_percent.toFixed(2)}%`, width);
     const m = ctx.measureText(text);
     const bw = m.actualBoundingBoxRight + m.actualBoundingBoxLeft + PADDING_W * 2;
     const bh = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent + PADDING_H * 2;
-    const margin = isTouch ? MARGIN * 2 : MARGIN;
     let bx = x + (w - bw) / 2;
-    let by = y - bh - margin;
+    let by = y - bh - MARGIN;
     let ay = y;
-    if (bx + bw > width) {
-        bx = width - bw;
-    }
-    if (bx < 0) {
-        bx = 0;
-    }
-    if (by < 0) {
-        // Draw below the box
-        by = y + h + margin;
-        ay = y + h;
-    }
-    if (by + bh > height) {
-        // Draw inside the box
-        by = y + margin;
-        ay = y;
+    if (isTouch) {
+        bx = (width - bw) / 2;
+        if (y + h / 2 < height / 2) {
+            // Draw at the bottom
+            by = height - bh - MARGIN;
+        } else {
+            // Draw at the top
+            by = MARGIN;
+        }
+    } else {
+        if (bx + bw > width) {
+            bx = width - bw;
+        }
+        if (bx < 0) {
+            bx = 0;
+        }
+        if (by < 0) {
+            // Draw below the box
+            by = y + h + MARGIN;
+            ay = y + h;
+        }
+        if (by + bh > height) {
+            // Draw inside the box
+            by = y + MARGIN;
+            ay = y;
+        }
     }
     ctx.fillStyle = tooltipBackground;
     ctx.beginPath();
     ctx.roundRect(bx, by, bw, bh, BORDER_RADIUS);
-    // Arrow
-    const ax = x + w / 2;
-    if (ay < by) {
-        // Top
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax + margin, by);
-        ctx.lineTo(ax - margin, by);
-    } else {
-        // Bottom
-        ctx.moveTo(ax, ay);
-        ctx.lineTo(ax + margin, by + bh);
-        ctx.lineTo(ax - margin, by + bh);
+    if (!isTouch) {
+        // Arrow
+        const ax = x + w / 2;
+        if (ay < by) {
+            // Top
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + MARGIN, by);
+            ctx.lineTo(ax - MARGIN, by);
+        } else {
+            // Bottom
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax + MARGIN, by + bh);
+            ctx.lineTo(ax - MARGIN, by + bh);
+        }
     }
     ctx.fill();
     ctx.fillStyle = tooltipColor;
     ctx.fillText(text, bx + PADDING_W, by + bh / 2);
 };
 
-let hovered = null;
+let hovered: Unit | null = null;
 let dirty = false;
 let isTouch = false;
-let cachedCanvas: HTMLCanvasElement = null;
+let cachedCanvas: HTMLCanvasElement | null = null;
 
 const setup = (ctx: CanvasRenderingContext2D, ratio: number, width: number, height: number) => {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0); // Scale to device pixel ratio
@@ -117,6 +161,9 @@ const draw = (canvas: HTMLCanvasElement, units: Unit[]) => {
         canvas.height = renderHeight;
     }
     // Update cached canvas if needed
+    if (!cachedCanvas) {
+        cachedCanvas = document.createElement("canvas");
+    }
     if (cachedCanvas.width !== renderWidth || cachedCanvas.height !== renderHeight) {
         cachedCanvas.width = renderWidth;
         cachedCanvas.height = renderHeight;
@@ -161,9 +208,6 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     const canvas = document.getElementById(id) as HTMLCanvasElement;
     if (!canvas || !canvas.getContext) {
         return;
-    }
-    if (!cachedCanvas) {
-        cachedCanvas = document.createElement("canvas");
     }
     const queueDraw = () => requestAnimationFrame(() => draw(canvas, units));
     const resizeObserver = new ResizeObserver(queueDraw);
@@ -210,7 +254,25 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
         url.searchParams.set("unit", unit.name);
         window.location.href = url.toString();
     });
+    updatePixelRatio(queueDraw, false);
     draw(canvas, units);
+};
+
+let remove = null;
+
+const updatePixelRatio = (redraw: () => void, now: boolean) => {
+    if (remove != null) {
+        remove();
+    }
+    const media = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    const cb = () => updatePixelRatio(redraw, true);
+    media.addEventListener("change", cb);
+    remove = () => {
+        media.removeEventListener("change", cb);
+    };
+    if (now) {
+        redraw();
+    }
 };
 
 // noinspection JSUnusedGlobalSymbols

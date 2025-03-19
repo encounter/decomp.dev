@@ -1,6 +1,7 @@
 mod config;
 mod cron;
 mod db;
+mod frogress;
 mod github;
 mod handlers;
 mod models;
@@ -16,10 +17,15 @@ use std::{
     time::Duration,
 };
 
-use axum::{http::header, Router};
+use axum::{
+    http::{header, Method},
+    Router,
+};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{
+    cors,
+    cors::CorsLayer,
     timeout::TimeoutLayer,
     trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
     ServiceBuilderExt,
@@ -56,10 +62,11 @@ async fn main() {
     let db = Database::new(&config.app).await.expect("Failed to open database");
     let github = GitHub::new(&config.app).await.expect("Failed to create GitHub client");
     let templates = templates::create("templates");
-    let state = AppState { config, db: db.clone(), github, templates };
+    let mut state = AppState { config, db: db.clone(), github, templates };
 
     // Refresh before starting the server
     // cron::refresh_projects(&mut state).await.expect("Failed to refresh projects");
+    // frogress::migrate_data(&mut state).await.expect("Failed to migrate data");
 
     // Start the task scheduler
     let mut scheduler = cron::create(state.clone()).await.expect("Failed to create scheduler");
@@ -91,6 +98,7 @@ fn app(state: AppState) -> Router {
                 .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
         )
         .layer(TimeoutLayer::new(Duration::from_secs(10)))
+        .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
         .compression();
     build_router().layer(middleware).with_state(state)
 }

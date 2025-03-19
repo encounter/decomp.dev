@@ -1,6 +1,7 @@
-use std::ffi::OsStr;
+use std::{ffi::OsStr, ops::Range};
 
 use anyhow::{anyhow, Result};
+use ariadne::{ColorGenerator, Label, Report, ReportBuilder, ReportKind, Source};
 use axum::{
     extract::Path,
     http::{header, StatusCode},
@@ -9,6 +10,7 @@ use axum::{
 use oxc::{
     allocator::Allocator,
     codegen::{CodeGenerator, CodegenReturn},
+    diagnostics::{OxcDiagnostic, Severity},
     minifier::{CompressOptions, Minifier, MinifierOptions},
     parser::Parser,
     semantic::SemanticBuilder,
@@ -40,16 +42,14 @@ pub async fn get_js(Path(filename): Path<String>) -> Result<Response, AppError> 
     path = path.with_extension("");
     let minify = path.extension() == Some(OsStr::new("min"));
     path = path.with_extension("ts");
-    let source_text =
-        std::fs::read_to_string(&path).map_err(|_| AppError::Status(StatusCode::NOT_FOUND))?;
-    let ret = transform(&path, &source_text, minify, response_type == ResponseType::SourceMap)?;
+    let ret = transform(&path, minify, response_type == ResponseType::SourceMap).await?;
     let (data, content_type) = match response_type {
         ResponseType::Js => (
-            format!("{}\n//# sourceMappingURL={}.map", ret.source_text, filename),
+            format!("{}\n//# sourceMappingURL={}.map", ret.code, filename),
             mime::APPLICATION_JAVASCRIPT_UTF_8.as_ref(),
         ),
         ResponseType::SourceMap => {
-            (ret.source_map.unwrap().to_json_string(), mime::APPLICATION_JSON.as_ref())
+            (ret.map.unwrap().to_json_string(), mime::APPLICATION_JSON.as_ref())
         }
     };
     Ok((
@@ -65,21 +65,29 @@ pub async fn get_js(Path(filename): Path<String>) -> Result<Response, AppError> 
         .into_response())
 }
 
-fn transform(
+async fn transform(
     path: &std::path::Path,
-    source_text: &str,
     minify: bool,
     source_map: bool,
-) -> Result<CodegenReturn> {
-    let source_type = SourceType::from_path(path)?;
+) -> Result<CodegenReturn, AppError> {
+    let filename = path
+        .file_name()
+        .ok_or(AppError::Status(StatusCode::NOT_FOUND))?
+        .to_string_lossy()
+        .into_owned();
+    let source_text = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|_| AppError::Status(StatusCode::NOT_FOUND))?;
+    let source_type =
+        SourceType::from_path(path).map_err(|_| AppError::Status(StatusCode::NOT_FOUND))?;
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source_text, source_type).parse();
+    let parsed = Parser::new(&allocator, &source_text, source_type).parse();
+    handle_errors(parsed.errors, &filename, &source_text)?;
     let program = allocator.alloc(parsed.program);
 
-    let (symbols, scopes) = SemanticBuilder::new(source_text, source_type)
-        .build(program)
-        .semantic
-        .into_symbol_table_and_scope_tree();
+    let builder_return = SemanticBuilder::new(&source_text).build(program);
+    handle_errors(builder_return.errors, &filename, &source_text)?;
+    let (symbols, scopes) = builder_return.semantic.into_symbol_table_and_scope_tree();
 
     let transform_options = TransformOptions::from_preset_env(&EnvOptions {
         targets: Targets::from_query("defaults"),
@@ -87,24 +95,15 @@ fn transform(
     })
     .map_err(|v| anyhow!("{}", v.first().unwrap()))?;
 
-    let _ = Transformer::new(
-        &allocator,
-        path,
-        source_type,
-        source_text,
-        parsed.trivias.clone(),
-        transform_options,
-    )
-    .build_with_symbols_and_scopes(symbols, scopes, program);
+    let transform_return =
+        Transformer::new(&allocator, path, &source_text, parsed.trivias.clone(), transform_options)
+            .build_with_symbols_and_scopes(symbols, scopes, program);
+    handle_errors(transform_return.errors, &filename, &source_text)?;
 
     let mangler = if minify {
         Minifier::new(MinifierOptions {
             mangle: minify,
-            compress: CompressOptions {
-                drop_debugger: false,
-                drop_console: false,
-                ..CompressOptions::all_true()
-            },
+            compress: CompressOptions { drop_console: false, ..CompressOptions::all_true() },
         })
         .build(&allocator, program)
         .mangler
@@ -117,7 +116,61 @@ fn transform(
         .with_mangler(mangler);
     if source_map {
         let name = path.file_name().unwrap().to_string_lossy();
-        codegen = codegen.enable_source_map(&name, source_text);
+        codegen = codegen.enable_source_map(&name, &source_text);
     }
     Ok(codegen.build(program))
+}
+
+fn handle_errors(
+    errors: Vec<OxcDiagnostic>,
+    filename: &str,
+    source_text: &str,
+) -> Result<(), AppError> {
+    let mut has_error = false;
+    for diagnostic in errors {
+        let mut colors = ColorGenerator::new();
+        type ReportSpan<'a> = (&'a str, Range<usize>);
+        let spans = diagnostic.labels.as_deref().unwrap_or_default();
+        let offset = spans
+            .iter()
+            .find_map(|label| label.primary().then_some(label.offset()))
+            .or_else(|| spans.first().map(|span| span.offset()))
+            .unwrap_or_default();
+        let mut report: ReportBuilder<ReportSpan> = Report::build(
+            match diagnostic.severity {
+                Severity::Advice => ReportKind::Advice,
+                Severity::Warning => ReportKind::Warning,
+                Severity::Error => ReportKind::Error,
+            },
+            filename,
+            offset,
+        )
+        .with_message(diagnostic.message.clone());
+        if let Some(number) = diagnostic.code.number.as_deref() {
+            report = report.with_code(number);
+        }
+        for span in spans {
+            let offset = span.offset();
+            let mut label = Label::new((filename, offset..offset)).with_color(colors.next());
+            if let Some(message) = span.label().as_deref() {
+                label = label.with_message(message);
+            }
+            report = report.with_label(label);
+        }
+        if let Some(help) = diagnostic.help.as_deref() {
+            report = report.with_help(help);
+        }
+        if let Some(url) = diagnostic.url.as_deref() {
+            report = report.with_note(url);
+        }
+        report.finish().print((filename, Source::from(source_text)))?;
+        if diagnostic.severity == Severity::Error {
+            has_error = true;
+        }
+    }
+    if has_error {
+        Err(AppError::Status(StatusCode::INTERNAL_SERVER_ERROR))
+    } else {
+        Ok(())
+    }
 }

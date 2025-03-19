@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "@picocss/pico": "^2.0.6"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4"
   }
 }

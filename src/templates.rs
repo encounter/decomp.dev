@@ -18,6 +18,7 @@ pub fn create(template_path: impl Into<String>) -> Templates {
         env.set_lstrip_blocks(true);
         env.add_filter("date", date);
         env.add_filter("timeago", timeago);
+        env.add_filter("size", size);
         Ok(env)
     }))
 }
@@ -39,4 +40,17 @@ fn date(value: String, format: Option<String>) -> String {
     let value = DateTime::parse_from_rfc3339(&value).unwrap_or_default();
     let format = format.as_deref().unwrap_or("%Y-%m-%d %H:%M:%S %Z");
     value.format(format).to_string()
+}
+
+/// Format a size in bytes to a human-readable string.
+/// Uses SI (kilo = 1000) units, formatted to two decimal places.
+pub fn size(value: u64) -> String {
+    let units = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+    let mut value = value as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < units.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    format!("{:.2} {}", value, units[unit])
 }

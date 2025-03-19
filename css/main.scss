@@ -53,38 +53,38 @@ $breakpoints: (
     "layout/landmarks": true,
     "layout/container": true,
     "layout/section": true,
-    "layout/grid": true,
-    "layout/overflow-auto": true,
+    "layout/grid": false,
+    "layout/overflow-auto": false,
 
     // Content
     "content/link": true,
     "content/typography": true,
     "content/embedded": true,
     "content/button": true,
-    "content/table": true,
+    "content/table": false,
     "content/code": true,
-    "content/figure": true,
+    "content/figure": false,
     "content/miscs": true,
 
     // Forms
     "forms/basics": true,
-    "forms/checkbox-radio-switch": true,
-    "forms/input-color": true,
-    "forms/input-date": true,
-    "forms/input-file": true,
-    "forms/input-range": true,
-    "forms/input-search": true,
+    "forms/checkbox-radio-switch": false,
+    "forms/input-color": false,
+    "forms/input-date": false,
+    "forms/input-file": false,
+    "forms/input-range": false,
+    "forms/input-search": false,
 
     // Components
     "components/accordion": true,
     "components/card": true,
     "components/dropdown": true,
     "components/group": true,
-    "components/loading": true,
-    "components/modal": true,
+    "components/loading": false,
+    "components/modal": false,
     "components/nav": true,
     "components/progress": false,
-    "components/tooltip": true,
+    "components/tooltip": false,
 
     // Utilities
     "utilities/accessibility": true,
@@ -103,6 +103,8 @@ $breakpoints: (
 
 @mixin pico-theme-dark {
   --pico-background-color: #181c25;
+  --pico-card-background-color: #1b1f29;
+  --pico-dropdown-background-color: #1b1f29;
   --pico-code-kbd-color: #fff;
   --pico-code-kbd-background-color: #333;
   --progress-background-color: #{$slate-800};
@@ -143,7 +145,7 @@ nav {
       padding-left: 10px;
     }
 
-    @media (max-width: map.get(map.get($breakpoints, "sm"), "breakpoint")) {
+    @media (max-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
       > li:not(:first-child) {
         display: none;
       }
@@ -172,6 +174,7 @@ $progress-height: 2rem;
   overflow: hidden;
   border-radius: var(--pico-border-radius);
   background-color: var(--progress-background-color);
+  margin-bottom: var(--pico-spacing);
 
   .progress-section.striped {
     //animation: progress-stripes 1s linear infinite;
@@ -209,18 +212,6 @@ $progress-height: 2rem;
 
     .progress-section:nth-child(2) {
       background-color: $azure-500;
-    }
-  }
-
-  &.overlay {
-    position: relative;
-    top: $progress-height * -1;
-    margin-bottom: calc($progress-height * -1 + var(--pico-spacing));
-    overflow: visible;
-    background: none;
-
-    .progress-section {
-      background: none;
     }
   }
 }
@@ -266,8 +257,8 @@ $unit-size: 0.75rem;
   --font-weight: normal;
   --font-size: 0.875rem;
   --font-family: var(--pico-font-family);
-  --tooltip-background: var(--pico-tooltip-background-color);
-  --tooltip-color: var(--pico-tooltip-color);
+  --tooltip-background: var(--pico-contrast-background);
+  --tooltip-color: var(--pico-contrast-inverse);
 }
 
 .project-header {
@@ -284,5 +275,58 @@ $unit-size: 0.75rem;
   .platform-icon {
     width: 1.5rem;
     height: 1.5rem;
+  }
+}
+
+@media (max-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+  .md {
+    display: none !important;
+  }
+}
+
+@media (min-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+  .sm {
+    display: none !important;
+  }
+}
+
+.title-group {
+  margin-top: calc(var(--pico-block-spacing-vertical) * 2);
+}
+
+#tooltip {
+  --arrow-size: 0.3rem;
+  position: absolute;
+  z-index: 99;
+  opacity: 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--pico-border-radius);
+  background: var(--pico-contrast-background);
+  color: var(--pico-contrast-inverse);
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity .1s ease, left .1s ease, top .1s ease;
+  margin-top: calc(var(--arrow-size) * -1);
+  font-style: normal;
+  font-weight: var(--pico-font-weight);
+  font-size: .875rem;
+
+  &::after {
+    content: "";
+    position: absolute;
+    display: block;
+    border-top: var(--arrow-size) solid var(--pico-contrast-background);
+    border-left: var(--arrow-size) solid transparent;
+    border-right: var(--arrow-size) solid transparent;
+    top: 100%;
+    left: calc(var(--arrow-left) - var(--arrow-size));
+    z-index: 100;
+    transition: left .1s ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #tooltip, #tooltip::after {
+    transition: none;
   }
 }

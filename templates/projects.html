@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <meta name="darkreader-lock">
-    <meta name="description" content="Decompilation progress reports">
-    <link rel="stylesheet" href="/css/main.min.css?1">
     <title>Projects • decomp.dev</title>
+    {% include 'fragments/header.html' %}
+    <meta name="description" content="Decompilation progress reports">
+    <meta property="og:title" content="Decompilation Progress Reports">
+    <meta property="og:description" content="Progress reports for matching decompilation projects">
+    <meta property="og:image" content="{{ image_url | safe }}">
+    <meta property="og:url" content="{{ canonical_url | safe }}">
 </head>
 <body>
 <header>
@@ -21,7 +22,7 @@
             <li>
                 <a href="/">Projects</a>
             </li>
-            <li>
+            <li class="md">
                 <details class="dropdown">
                     <summary>{{ current_sort.name }}</summary>
                     <ul>
@@ -32,14 +33,28 @@
                 </details>
             </li>
         </ul>
-        <ul>
-            <li>
-                <a href="https://ghidra.decomp.dev">Ghidra</a>
-            </li>
-        </ul>
+        {% include 'fragments/nav-links.html' %}
     </nav>
+    <div class="title-group">
+        <h3>Progress Reports</h3>
+        <blockquote>
+            Matching decompilation projects attempt to write source code (C, C++) that compiles to the same binary as the original.
+            All source code is written from scratch.
+            <footer>
+                <a href="https://wiki.decomp.dev/">Learn more</a>
+            </footer>
+        </blockquote>
+    </div>
 </header>
 <main>
+    <details class="dropdown sm">
+        <summary>{{ current_sort.name }}</summary>
+        <ul>
+            {% for sort in sort_options %}
+            <li><a href="?sort={{ sort.key }}">{{ sort.name }}</a></li>
+            {% endfor %}
+        </ul>
+    </details>
     {% for project in projects %}
     {% set measures = project.measures %}
     <article class="project">
@@ -55,26 +70,21 @@
             {% endif %}
         </div>
         <h6>
-            {{ measures.matched_code_percent | round(2) }}% decompiled |
-            {{ measures.complete_code_percent | round(2) }}% fully linked
+            {% if current_sort.key == 'total_code' or current_sort.key == 'matched_code' %}
+            {{ measures.matched_code | size }} matched code
+            | {{ measures.total_code | size }} total code
+            {% else %}
+            {{ measures.matched_code_percent | round(2) }}% decompiled
+            {% if measures.complete_code_percent > 0 %}
+            | {{ measures.complete_code_percent | round(2) }}% fully linked
+            {% endif %}
+            {% endif %}
         </h6>
         <div class="progress-root code">
-            <div class="progress-section" style="width: {{ measures.complete_code_percent }}%"></div>
-            <div class="progress-section striped"
-                 style="width: {{ measures.matched_code_percent - measures.complete_code_percent }}%"></div>
-            <div class="progress-section striped"
-                 style="width: {{ measures.fuzzy_match_percent - measures.matched_code_percent }}%"></div>
-        </div>
-        <!-- Invisible overlay for tooltips -->
-        <div class="progress-root overlay">
-            <div class="progress-section" style="width: {{ measures.complete_code_percent }}%"
-                 data-tooltip="{{ measures.complete_code_percent | round(2) }}% fully linked"></div>
-            <div class="progress-section"
-                 style="width: {{ measures.matched_code_percent - measures.complete_code_percent }}%"
-                 data-tooltip="{{ measures.matched_code_percent | round(2) }}% perfect match"></div>
-            <div class="progress-section"
-                 style="width: {{ measures.fuzzy_match_percent - measures.matched_code_percent }}%"
-                 data-tooltip="{{ measures.fuzzy_match_percent | round(2) }}% fuzzy match"></div>
+            {% for section in project.code_progress %}
+            <div class="{{ section.class }}" style="width: {{ section.percent }}%"
+                 data-tooltip="{{ section.tooltip }}"></div>
+            {% endfor %}
         </div>
         <small class="muted">
             <span title="{{ project.timestamp | date }}">Updated {{ project.timestamp | timeago }}</span>

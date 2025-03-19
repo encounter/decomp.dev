@@ -2,13 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <meta name="darkreader-lock">
-    <meta name="description" content="Decompilation progress report for {{ project_name }}">
     <title>{{ project_short_name }} • Progress Report</title>
-    <link rel="stylesheet" href="/css/main.min.css?1">
-    <script src="/js/treemap.min.js?1"></script>
+    {% include 'fragments/header.html' %}
+    <script src="/js/treemap.min.js?6"></script>
+    <meta name="description" content="Decompilation progress report for {{ project_name }}">
     <meta property="og:title" content="{{ project_short_name }} is {{ measures.matched_code_percent | round(2) }}% decompiled">
     <meta property="og:description" content="Decompilation progress report for {{ project_name }}">
     <meta property="og:image" content="{{ image_url | safe }}">
@@ -30,7 +27,7 @@
                 <a href="{{ project_path | safe }}">{{ project_short_name }}</a>
             </li>
             <li>
-                <details class="dropdown">
+                <details class="dropdown md">
                     <summary>{{ version }}</summary>
                     <ul dir="rtl">
                         {% for version in versions %}
@@ -40,54 +37,41 @@
                 </details>
             </li>
         </ul>
-        <ul>
-            <li>
-                <a href="https://ghidra.decomp.dev">Ghidra</a>
-            </li>
-        </ul>
+        {% include 'fragments/nav-links.html' %}
     </nav>
 </header>
 <main>
     <h3>{{ project_short_name }} is {{ measures.matched_code_percent | round(2) }}% decompiled</h3>
-    {% if not current_unit %}
+    {% if not current_unit and measures.complete_code_percent > 0 %}
     <h4 class="muted">{{ measures.complete_code_percent | round(2) }}% fully linked</h4>
     {% endif %}
     {% if source_file_url %}
     <h4 class="muted"><a href="{{ source_file_url | safe }}" target="_blank">View source file</a></h4>
     {% endif %}
-    <h6 class="report-header">Code</h6>
+    <details class="dropdown sm">
+        <summary>{{ version }}</summary>
+        <ul>
+            {% for version in versions %}
+            <li><a href="{{ version.path | safe }}">{{ version.id }}</a></li>
+            {% endfor %}
+        </ul>
+    </details>
+    <h6 class="report-header">Code <small class="muted">({{ measures.total_code | size }})</small></h6>
     <div class="progress-root code">
-        <div class="progress-section" style="width: {{ measures.complete_code_percent }}%"></div>
-        <div class="progress-section striped"
-             style="width: {{ measures.matched_code_percent - measures.complete_code_percent }}%"></div>
-        <div class="progress-section striped"
-             style="width: {{ measures.fuzzy_match_percent - measures.matched_code_percent }}%"></div>
+        {% for section in code_progress %}
+        <div class="{{ section.class }}" style="width: {{ section.percent }}%"
+             data-tooltip="{{ section.tooltip }}"></div>
+        {% endfor %}
     </div>
-    <!-- Invisible overlay for tooltips -->
-    <div class="progress-root overlay">
-        <div class="progress-section" style="width: {{ measures.complete_code_percent }}%"
-             data-tooltip="{{ measures.complete_code_percent | round(2) }}% fully linked"></div>
-        <div class="progress-section"
-             style="width: {{ measures.matched_code_percent - measures.complete_code_percent }}%"
-             data-tooltip="{{ measures.matched_code_percent | round(2) }}% perfect match"></div>
-        <div class="progress-section"
-             style="width: {{ measures.fuzzy_match_percent - measures.matched_code_percent }}%"
-             data-tooltip="{{ measures.fuzzy_match_percent | round(2) }}% fuzzy match"></div>
-    </div>
-    <h6 class="report-header">Data</h6>
+    {% if data_progress %}
+    <h6 class="report-header">Data <small class="muted">({{ measures.total_data | size }})</small></h6>
     <div class="progress-root data">
-        <div class="progress-section" style="width: {{ measures.complete_data_percent }}%"></div>
-        <div class="progress-section striped"
-             style="width: {{ measures.matched_data_percent - measures.complete_data_percent }}%"></div>
+        {% for section in data_progress %}
+        <div class="{{ section.class }}" style="width: {{ section.percent }}%"
+             data-tooltip="{{ section.tooltip }}"></div>
+        {% endfor %}
     </div>
-    <!-- Invisible overlay for tooltips -->
-    <div class="progress-root overlay">
-        <div class="progress-section" style="width: {{ measures.complete_data_percent }}%"
-             data-tooltip="{{ measures.complete_data_percent | round(2) }}% fully linked"></div>
-        <div class="progress-section"
-             style="width: {{ measures.matched_data_percent - measures.complete_data_percent }}%"
-             data-tooltip="{{ measures.matched_data_percent | round(2) }}% perfect match"></div>
-    </div>
+    {% endif %}
     <h6 class="report-header">Commit</h6>
     <div>
         {% if commit_message %}

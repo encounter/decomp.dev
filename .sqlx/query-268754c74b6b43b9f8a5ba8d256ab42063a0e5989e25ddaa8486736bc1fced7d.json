@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM report_units\n            WHERE id NOT IN (SELECT report_unit_id FROM report_report_units)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "268754c74b6b43b9f8a5ba8d256ab42063a0e5989e25ddaa8486736bc1fced7d"
+}

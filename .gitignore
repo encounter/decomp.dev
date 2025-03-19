@@ -1,6 +1,6 @@
 /node_modules
 /target
 /.idea
-db.sqlite*
+*.sqlite*
 config.yml
 .env

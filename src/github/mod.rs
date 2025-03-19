@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use axum::http::StatusCode;
-use moka::future::Cache;
 use objdiff_core::bindings::report::Report;
 use octocrab::{
     models::{repos::RepoCommitPage, ArtifactId, Author, RunId},
@@ -15,10 +14,11 @@ use octocrab::{
 };
 use regex::Regex;
 use tokio::{sync::Semaphore, task::JoinSet};
+use tracing::log;
 
 use crate::{
     config::AppConfig,
-    models::{Commit, Project, ReportFile},
+    models::{Commit, Project},
     AppState,
 };
 
@@ -27,7 +27,6 @@ pub struct GitHub {
     pub client: Octocrab,
     #[allow(dead_code)]
     pub profile: Author,
-    commit_cache: Cache<GetCommit, Option<RepoCommitPage>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -46,8 +45,7 @@ impl GitHub {
         octocrab::initialise(client.clone());
         let profile = client.current().user().await.context("Failed to fetch current user")?;
         tracing::info!("Logged in as {}", profile.login);
-        let commit_cache = Cache::builder().max_capacity(100).build();
-        Ok(Self { client, profile, commit_cache })
+        Ok(Self { client, profile })
     }
 
     pub async fn get_commit(
@@ -56,34 +54,36 @@ impl GitHub {
         repo: &str,
         sha: &str,
     ) -> Result<Option<RepoCommitPage>> {
-        let key =
-            GetCommit { owner: owner.to_string(), repo: repo.to_string(), sha: sha.to_string() };
-        if let Some(commit) = self.commit_cache.get(&key).await {
-            return Ok(commit);
+        match self.client.repos(owner, repo).list_commits().sha(sha).per_page(1).send().await {
+            Ok(page) => Ok(page.items.into_iter().next().map(|c| c.commit)),
+            Err(octocrab::Error::GitHub {
+                source: GitHubError { status_code: StatusCode::NOT_FOUND, .. },
+                ..
+            }) => Ok(None),
+            Err(e) => Err(e.into()),
         }
-        let commit =
-            match self.client.repos(owner, repo).list_commits().sha(sha).per_page(1).send().await {
-                Ok(page) => page.items.into_iter().next().map(|c| c.commit),
-                Err(octocrab::Error::GitHub {
-                    source: GitHubError { status_code: StatusCode::NOT_FOUND, .. },
-                    ..
-                }) => None,
-                Err(e) => return Err(e.into()),
-            };
-        self.commit_cache.insert(key, commit.clone()).await;
-        Ok(commit)
     }
 }
 
-pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64) -> Result<()> {
-    tracing::info!("Refreshing project {}/{}", owner, repo);
+pub async fn run(
+    state: &mut AppState,
+    owner_name: &str,
+    repo_name: &str,
+    stop_run_id: u64,
+) -> Result<()> {
+    tracing::debug!("Refreshing project {}/{}", owner_name, repo_name);
     let existing = state
         .db
-        .get_project_info(owner, repo, None)
+        .get_project_info(owner_name, repo_name, None)
         .await
         .context("Failed to fetch project info")?;
-    let repo =
-        state.github.client.repos(owner, repo).get().await.context("Failed to fetch repo")?;
+    let repo = state
+        .github
+        .client
+        .repos(owner_name, repo_name)
+        .get()
+        .await
+        .context("Failed to fetch repo")?;
     let branch = repo.default_branch.as_deref().unwrap_or("main");
     let Some(owner) = repo.owner else {
         return Err(anyhow!("Repo has no owner"));
@@ -94,9 +94,27 @@ pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64
         repo: repo.name.clone(),
         name: None,
         short_name: None,
+        default_category: None,
         default_version: None,
         platform: None,
     });
+
+    let workflows = state
+        .github
+        .client
+        .workflows(&project.owner, &project.repo)
+        .list()
+        .send()
+        .await
+        .context("Failed to fetch workflows")?;
+    let Some(workflow) = workflows
+        .items
+        .iter()
+        .find(|w| w.path.ends_with("build.yml") || w.path.ends_with("progress.yml"))
+    else {
+        log::warn!("No known workflow found for {}/{}", owner_name, repo_name);
+        return Ok(());
+    };
 
     let mut runs = vec![];
     let mut page = 1u32;
@@ -105,7 +123,7 @@ pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64
             .github
             .client
             .workflows(&project.owner, &project.repo)
-            .list_runs("build.yml")
+            .list_runs(workflow.id.to_string())
             .branch(branch)
             .event("push")
             .status("completed")
@@ -138,7 +156,7 @@ pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64
         }
         page += 1;
     }
-    tracing::info!("Fetched {} runs", runs.len());
+    tracing::info!("Fetched {} runs for project {}/{}", runs.len(), owner_name, repo_name);
 
     struct TaskResult {
         run_id: RunId,
@@ -156,7 +174,7 @@ pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64
         let commit = Commit::from(&run.head_commit);
         set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            match db.report_exists(&project.owner, &project.repo, &commit.sha).await {
+            match db.report_exists(project.id, &commit.sha).await {
                 Ok(true) => {
                     return TaskResult {
                         run_id,
@@ -185,19 +203,16 @@ pub async fn run(state: &mut AppState, owner: &str, repo: &str, stop_run_id: u64
                     artifacts.len()
                 );
                 for artifact in artifacts {
-                    let file = ReportFile {
-                        project: project.clone(),
-                        commit: commit.clone(),
-                        version: artifact.version,
-                        report: artifact.report,
-                    };
                     let start = std::time::Instant::now();
-                    state.db.insert_report(&file).await?;
+                    state
+                        .db
+                        .insert_report(&project, &commit, &artifact.version, *artifact.report)
+                        .await?;
                     let duration = start.elapsed();
                     tracing::info!(
                         "Inserted report {} ({}) in {}ms",
-                        file.version,
-                        file.commit.sha,
+                        artifact.version,
+                        commit.sha,
                         duration.as_millis()
                     );
                 }
@@ -224,7 +239,7 @@ struct ProcessWorkflowRunResult {
 
 struct ProcessArtifactResult {
     version: String,
-    report: Arc<Report>,
+    report: Box<Report>,
 }
 
 async fn process_workflow_run(
@@ -318,7 +333,7 @@ async fn process_workflow_run(
     Ok(result)
 }
 
-type DownloadArtifactResult = Result<Vec<(String, Arc<Report>)>>;
+type DownloadArtifactResult = Result<Vec<(String, Box<Report>)>>;
 
 async fn download_artifact(
     github: GitHub,
@@ -342,17 +357,17 @@ async fn download_artifact(
         {
             let mut contents = Vec::with_capacity(file.size() as usize);
             file.read_to_end(&mut contents)?;
-            let mut report = Report::parse(&contents)?;
+            let mut report = Box::new(Report::parse(&contents)?);
             report.migrate()?;
             // Split combined reports into individual reports
             if version.eq_ignore_ascii_case("combined") {
                 return Ok(report
                     .split()
                     .into_iter()
-                    .map(|(version, report)| (version, Arc::new(report)))
+                    .map(|(version, report)| (version, Box::new(report)))
                     .collect());
             }
-            return Ok(vec![(version, Arc::new(report))]);
+            return Ok(vec![(version, report)]);
         }
     }
     Ok(vec![])

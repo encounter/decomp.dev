@@ -1,4 +1,4 @@
-use std::{convert::Infallible, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, str::FromStr};
 
 use axum::{
     async_trait,
@@ -18,6 +18,7 @@ mod assets;
 mod badge;
 mod css;
 mod js;
+mod og;
 mod project;
 mod report;
 mod treemap;
@@ -27,6 +28,7 @@ pub fn build_router() -> Router<AppState> {
         .route("/css/*filename", get(css::get_css))
         .route("/js/*filename", get(js::get_js))
         .route("/assets/*filename", get(assets::get_asset))
+        .route("/og.png", get(og::get_og))
         .route("/", get(project::get_projects))
         .route("/:owner/:repo", get(report::get_report))
         .route("/:owner/:repo/:version", get(report::get_report))
@@ -92,12 +94,13 @@ pub fn parse_accept(headers: &HeaderMap, ext: Option<&str>) -> Vec<Mime> {
     }
 }
 
-pub struct Protobuf<T: Message>(pub Arc<T>);
+pub struct Protobuf<'a, T>(pub &'a T)
+where T: Message;
 
 pub const APPLICATION_PROTOBUF: &str = "application/x-protobuf";
 pub const PROTOBUF: &str = "x-protobuf";
 
-impl<T: Message> IntoResponse for Protobuf<T> {
+impl<T: Message> IntoResponse for Protobuf<'_, T> {
     fn into_response(self) -> Response {
         let mut bytes = BytesMut::with_capacity(self.0.encoded_len());
         self.0.encode(&mut bytes).unwrap();

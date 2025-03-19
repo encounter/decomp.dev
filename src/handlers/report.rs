@@ -15,7 +15,8 @@ use url::Url;
 
 use super::{badge, parse_accept, treemap, AppError, FullUri, Protobuf, PROTOBUF};
 use crate::{
-    models::{Project, ProjectInfo, ReportFile},
+    handlers::project::{code_progress_sections, data_progress_sections, ProgressSection},
+    models::{FullReportFile, Project, ProjectInfo},
     templates::render,
     util::UrlExt,
     AppState,
@@ -75,6 +76,8 @@ struct ReportTemplateContext<'a> {
     commit_message: Option<&'a str>,
     commit_url: &'a str,
     source_file_url: Option<&'a str>,
+    code_progress: Vec<ProgressSection>,
+    data_progress: Vec<ProgressSection>,
 }
 
 #[derive(Serialize)]
@@ -103,24 +106,24 @@ struct ReportTemplateVersion<'a> {
 }
 
 /// Duplicate of Measures to avoid omitting empty fields
-#[derive(Serialize)]
-struct TemplateMeasures {
-    fuzzy_match_percent: f32,
-    total_code: u64,
-    matched_code: u64,
-    matched_code_percent: f32,
-    total_data: u64,
-    matched_data: u64,
-    matched_data_percent: f32,
-    total_functions: u32,
-    matched_functions: u32,
-    matched_functions_percent: f32,
-    complete_code: u64,
-    complete_code_percent: f32,
-    complete_data: u64,
-    complete_data_percent: f32,
-    total_units: u32,
-    complete_units: u32,
+#[derive(Serialize, Default, Clone)]
+pub struct TemplateMeasures {
+    pub fuzzy_match_percent: f32,
+    pub total_code: u64,
+    pub matched_code: u64,
+    pub matched_code_percent: f32,
+    pub total_data: u64,
+    pub matched_data: u64,
+    pub matched_data_percent: f32,
+    pub total_functions: u32,
+    pub matched_functions: u32,
+    pub matched_functions_percent: f32,
+    pub complete_code: u64,
+    pub complete_code_percent: f32,
+    pub complete_data: u64,
+    pub complete_data_percent: f32,
+    pub total_units: u32,
+    pub complete_units: u32,
 }
 
 impl From<&Measures> for TemplateMeasures {
@@ -227,11 +230,14 @@ pub async fn get_report(
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
+    let report = state.db.upgrade_report(&report).await?;
 
     let scope = apply_scope(&report, &project_info, &query)?;
     match query.mode.as_deref().unwrap_or("report").to_ascii_lowercase().as_str() {
         "shield" => mode_shield(&scope, query, &acceptable),
         "report" => mode_report(&scope, &state, uri, query, start, &acceptable).await,
+        "measures" => mode_measures(&scope, &acceptable),
+        "history" => mode_history(&scope, &state, query, &acceptable).await,
         _ => Err(AppError::Status(StatusCode::BAD_REQUEST)),
     }
 }
@@ -254,9 +260,11 @@ async fn mode_report(
             rendered = rendered.replace("[[time]]", &format!("{}ms", elapsed.as_millis()));
             return Ok(Html(rendered).into_response());
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
-            return Ok(Json(scope.report.report.clone()).into_response());
+            let flattened = scope.report.report.flatten();
+            return Ok(Json(flattened).into_response());
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == PROTOBUF {
-            return Ok(Protobuf(scope.report.report.clone()).into_response());
+            let flattened = scope.report.report.flatten();
+            return Ok(Protobuf(&flattened).into_response());
         } else if mime.type_() == mime::IMAGE && mime.subtype() == mime::SVG {
             let (w, h) = query.size();
             let svg = treemap::render_svg(&scope.units, w, h, state)?;
@@ -278,11 +286,11 @@ async fn mode_report(
 }
 
 fn mode_shield(
-    Scope { report, measures, label, .. }: &Scope<'_>,
+    &Scope { project_info, measures, label, .. }: &Scope<'_>,
     query: ReportQuery,
     acceptable: &[Mime],
 ) -> Result<Response, AppError> {
-    let label = label.unwrap_or_else(|| report.project.short_name());
+    let label = label.unwrap_or_else(|| project_info.project.short_name());
     for mime in acceptable {
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::IMAGE && mime.subtype() == mime::SVG)
@@ -308,6 +316,79 @@ fn mode_shield(
     Err(AppError::Status(StatusCode::NOT_ACCEPTABLE))
 }
 
+fn mode_measures(
+    &Scope { measures, .. }: &Scope<'_>,
+    acceptable: &[Mime],
+) -> Result<Response, AppError> {
+    for mime in acceptable {
+        if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
+            || (mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON)
+        {
+            return Ok(Json(measures).into_response());
+        } else if mime.type_() == mime::APPLICATION && mime.subtype() == PROTOBUF {
+            return Ok(Protobuf(measures).into_response());
+        }
+    }
+    Err(AppError::Status(StatusCode::NOT_ACCEPTABLE))
+}
+
+#[derive(Serialize)]
+struct ReportHistoryEntry {
+    timestamp: String,
+    commit_sha: String,
+    measures: TemplateMeasures,
+}
+
+async fn mode_history(
+    scope: &Scope<'_>,
+    state: &AppState,
+    query: ReportQuery,
+    acceptable: &[Mime],
+) -> Result<Response, AppError> {
+    let report_measures =
+        state.db.fetch_all_reports(&scope.project_info.project, &scope.report.version).await?;
+    let mut result = Vec::with_capacity(report_measures.len());
+    for report in report_measures {
+        let mut measures = Some(Cow::Borrowed(
+            report.report.measures(scope.project_info.project.default_category.as_deref()),
+        ));
+        if let Some(unit_name) = query.unit.as_ref() {
+            let full_report = state.db.upgrade_report(&report).await?;
+            measures = full_report
+                .report
+                .units
+                .iter()
+                .find(|u| &u.name == unit_name)
+                .and_then(|c| c.measures.as_ref())
+                .map(|m| Cow::Owned(m.clone()));
+        } else if let Some(category_id) = query.category.as_ref() {
+            measures = report
+                .report
+                .categories
+                .iter()
+                .find(|c| &c.id == category_id)
+                .and_then(|c| c.measures.as_ref())
+                .map(|m| Cow::Borrowed(m));
+        }
+        let Some(measures) = measures else {
+            continue;
+        };
+        result.push(ReportHistoryEntry {
+            timestamp: report.commit.timestamp.to_rfc3339(),
+            commit_sha: report.commit.sha,
+            measures: TemplateMeasures::from(measures.as_ref()),
+        });
+    }
+    for mime in acceptable {
+        if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
+            || (mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON)
+        {
+            return Ok(Json(result).into_response());
+        }
+    }
+    Err(AppError::Status(StatusCode::NOT_ACCEPTABLE))
+}
+
 const EMPTY_MEASURES: Measures = Measures {
     fuzzy_match_percent: 0.0,
     total_code: 0,
@@ -328,7 +409,7 @@ const EMPTY_MEASURES: Measures = Measures {
 };
 
 struct Scope<'a> {
-    report: &'a ReportFile,
+    report: &'a FullReportFile,
     project_info: &'a ProjectInfo,
     measures: &'a Measures,
     current_category: Option<&'a ReportCategory>,
@@ -338,15 +419,18 @@ struct Scope<'a> {
 }
 
 fn apply_scope<'a>(
-    report: &'a ReportFile,
+    report: &'a FullReportFile,
     project_info: &'a ProjectInfo,
     query: &ReportQuery,
 ) -> Result<Scope<'a>> {
-    let mut measures = report.report.measures.as_ref().unwrap_or(&EMPTY_MEASURES);
+    let mut measures = &report.report.measures;
     let mut current_category = None;
     let mut category_id_filter = None;
-    if let Some(category) =
-        query.category.as_ref().and_then(|id| report.report.categories.iter().find(|c| c.id == *id))
+    if let Some(category) = query
+        .category
+        .as_deref()
+        .or(project_info.project.default_category.as_deref())
+        .and_then(|id| report.report.categories.iter().find(|c| c.id == *id))
     {
         measures = category.measures.as_ref().unwrap_or(&EMPTY_MEASURES);
         current_category = Some(category);
@@ -359,7 +443,7 @@ fn apply_scope<'a>(
         .and_then(|unit_name| report.report.units.iter().find(|u| u.name == *unit_name))
     {
         measures = unit.measures.as_ref().unwrap_or(&EMPTY_MEASURES);
-        current_unit = Some(unit);
+        current_unit = Some(unit.as_ref());
     }
     let (w, h) = query.size();
     let mut units =
@@ -437,23 +521,34 @@ fn apply_scope<'a>(
 async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Result<String> {
     let Scope { report, project_info, measures, current_category, current_unit, units, label } =
         scope;
-    let commit = match state
-        .github
-        .get_commit(&project_info.project.owner, &project_info.project.repo, &report.commit.sha)
-        .await
-    {
-        Ok(commit) => commit,
-        Err(e) => {
-            tracing::warn!(
-                "Failed to get commit {}/{}@{}: {}",
-                project_info.project.owner,
-                project_info.project.repo,
-                report.commit.sha,
-                e
-            );
-            None
+
+    let mut commit_message = report.commit.message.clone();
+    if commit_message.is_none() {
+        let commit = match state
+            .github
+            .get_commit(&project_info.project.owner, &project_info.project.repo, &report.commit.sha)
+            .await
+        {
+            Ok(commit) => commit,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get commit {}/{}@{}: {}",
+                    project_info.project.owner,
+                    project_info.project.repo,
+                    report.commit.sha,
+                    e
+                );
+                None
+            }
+        };
+        if let Some(commit) = commit {
+            state
+                .db
+                .update_report_message(project_info.project.id, &report.commit.sha, &commit.message)
+                .await?;
+            commit_message = Some(commit.message);
         }
-    };
+    }
 
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
     let project_base_path =
@@ -517,7 +612,7 @@ async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Resul
     });
 
     let units_path = canonical_url.query_param("unit", None).path_and_query().to_string();
-    let commit_message = commit.as_ref().and_then(|c| c.message.lines().next());
+    let commit_message = commit_message.as_deref().and_then(|message| message.lines().next());
     let commit_url = format!("{}/commit/{}", project_info.project.repo_url(), report.commit.sha);
     let source_file_url = current_unit
         .and_then(|u| u.metadata.as_ref())
@@ -537,10 +632,10 @@ async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Resul
     };
 
     render(&state.templates, "report.html", ReportTemplateContext {
-        project: &report.project,
+        project: &project_info.project,
         project_name: project_name.as_ref(),
         project_short_name: project_short_name.as_ref(),
-        project_url: &report.project.repo_url(),
+        project_url: &project_info.project.repo_url(),
         project_path: &project_base_path,
         commit: &report.commit.sha,
         version: &report.version,
@@ -560,5 +655,7 @@ async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Resul
         commit_message,
         commit_url: &commit_url,
         source_file_url: source_file_url.as_deref(),
+        code_progress: code_progress_sections(measures),
+        data_progress: data_progress_sections(measures),
     })
 }

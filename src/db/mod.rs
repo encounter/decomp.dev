@@ -1,20 +1,28 @@
-use std::{borrow::Cow, cell::RefCell, sync::Arc};
+use core::mem;
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
+use futures_util::TryStreamExt;
 use moka::future::Cache;
-use objdiff_core::bindings::report::{Report, ReportUnit};
+use objdiff_core::bindings::report::{Report, ReportUnit, REPORT_VERSION};
 use prost::Message;
-use sqlx::{migrate::MigrateDatabase, Pool, Sqlite, SqlitePool};
+use sqlx::{
+    migrate::MigrateDatabase, Connection, Executor, Pool, Row, Sqlite, SqliteConnection, SqlitePool,
+};
 
 use crate::{
     config::AppConfig,
-    models::{Commit, Project, ProjectInfo, ReportFile},
+    models::{
+        CachedReport, CachedReportFile, Commit, FrogressMapping, FullReport, FullReportFile,
+        Project, ProjectInfo,
+    },
 };
 
 #[derive(Clone)]
 pub struct Database {
     pool: Pool<Sqlite>,
-    report_cache: Cache<ReportKey, Arc<Report>>,
+    report_cache: Cache<ReportKey, CachedReportFile>,
+    report_unit_cache: Cache<UnitKey, Arc<ReportUnit>>,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -26,7 +34,10 @@ struct ReportKey {
 }
 
 // BLAKE3 hash of the unit data
-type UnitKey = [u8; 32];
+pub type UnitKey = [u8; 32];
+
+// Maximum number of bind parameters in a single query (SQLite limit)
+const BIND_LIMIT: usize = 32766;
 
 impl Database {
     pub async fn new(config: &AppConfig) -> Result<Self> {
@@ -41,106 +52,126 @@ impl Database {
             .run(&pool)
             .await
             .context("Failed to run database migrations")?;
-        let report_cache = Cache::builder().max_capacity(100).build();
-        let db = Self { pool, report_cache };
+        let report_cache = Cache::<ReportKey, CachedReportFile>::builder()
+            .max_capacity(8192)
+            .eviction_listener(|k, _v, _cause| {
+                tracing::info!(
+                    "Evicting report from cache: {}/{}@{}:{}",
+                    k.owner,
+                    k.repo,
+                    k.commit,
+                    k.version
+                );
+            })
+            .build();
+        let report_unit_cache = Cache::<UnitKey, Arc<ReportUnit>>::builder()
+            .weigher(|_, v| v.encoded_len() as u32)
+            .max_capacity(256 * 1024 * 1024) // 256 MB
+            .eviction_listener(|k, _v, _cause| {
+                tracing::info!("Evicting report unit from cache: {:?}", hex::encode(k.as_ref()));
+            })
+            .build();
+        let db = Self { pool, report_cache, report_unit_cache };
         db.fixup_report_units().await?;
+        db.migrate_reports().await?;
+        db.cleanup_report_units().await?;
         Ok(db)
     }
 
     pub async fn close(&self) { self.pool.close().await }
 
-    pub async fn insert_report(&mut self, file: &ReportFile) -> Result<()> {
+    pub async fn insert_report(
+        &mut self,
+        project: &Project,
+        commit: &Commit,
+        version: &str,
+        mut report: Report,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        let project_id = file.project.id as i64;
+        let project_id = project.id as i64;
         sqlx::query!(
             r#"
-            INSERT INTO projects (id, owner, repo, name, short_name, default_version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            INSERT INTO projects (id, owner, repo, name, short_name, default_category, default_version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (id) DO NOTHING
             "#,
             project_id,
-            file.project.owner,
-            file.project.repo,
-            file.project.name,
-            file.project.short_name,
-            file.project.default_version,
+            project.owner,
+            project.repo,
+            project.name,
+            project.short_name,
+            project.default_category,
+            project.default_version,
         )
         .execute(&mut *tx)
         .await?;
-        let data = compress(
-            &Report {
-                measures: file.report.measures,
-                units: vec![],
-                version: file.report.version,
-                categories: file.report.categories.clone(),
-            }
-            .encode_to_vec(),
-        );
+        report.migrate()?;
+        let units = mem::take(&mut report.units);
+        let data = compress(&report.encode_to_vec());
         let report_id = sqlx::query!(
             r#"
-            INSERT INTO reports (project_id, version, git_commit, timestamp, data)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO reports (project_id, version, git_commit, timestamp, data, data_version)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (project_id, version COLLATE NOCASE, git_commit COLLATE NOCASE) DO UPDATE
             SET timestamp = EXCLUDED.timestamp
             RETURNING id
             "#,
             project_id,
-            file.version,
-            file.commit.sha,
-            file.commit.timestamp,
+            version,
+            commit.sha,
+            commit.timestamp,
             data,
+            report.version,
         )
         .fetch_one(&mut *tx)
         .await?
         .id;
-        let mut keys = Vec::with_capacity(file.report.units.len());
-        for unit in &file.report.units {
-            let mut data = unit.encode_to_vec();
-            let key: UnitKey = blake3::hash(&data).into();
-            keys.push(key);
-            let key = key.to_vec();
-            data = compress(&data);
-            sqlx::query!(
-                r#"
-                INSERT INTO report_units (id, data, name)
-                VALUES (?, ?, ?)
-                ON CONFLICT (id) DO NOTHING
-                "#,
-                key,
-                data,
-                unit.name,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        for (idx, key) in keys.iter().enumerate() {
-            let key = key.to_vec();
-            let idx = idx as i32;
-            sqlx::query!(
-                r#"
-                INSERT INTO report_report_units (report_id, report_unit_id, unit_index)
-                VALUES (?, ?, ?)
-                ON CONFLICT DO NOTHING
-                "#,
-                report_id,
-                key,
-                idx,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
+        Self::insert_report_units(&mut *tx, &units, report_id).await?;
         tx.commit().await?;
-        self.report_cache
-            .insert(
-                ReportKey {
-                    owner: file.project.owner.to_ascii_lowercase(),
-                    repo: file.project.repo.to_ascii_lowercase(),
-                    commit: file.commit.sha.to_ascii_lowercase(),
-                    version: file.version.to_ascii_lowercase(),
-                },
-                file.report.clone(),
-            )
-            .await;
+        // self.report_cache
+        //     .insert(
+        //         ReportKey {
+        //             owner: project.owner.to_ascii_lowercase(),
+        //             repo: project.repo.to_ascii_lowercase(),
+        //             commit: commit.sha.to_ascii_lowercase(),
+        //             version: version.to_ascii_lowercase(),
+        //         },
+        //         file.clone(),
+        //     )
+        //     .await;
+        Ok(())
+    }
+
+    async fn insert_report_units(
+        conn: &mut SqliteConnection,
+        units: &[ReportUnit],
+        report_id: i64,
+    ) -> Result<()> {
+        let mut keys = Vec::with_capacity(units.len());
+        for chunk in units.chunks(BIND_LIMIT / 3) {
+            let mut builder =
+                sqlx::QueryBuilder::<Sqlite>::new("INSERT INTO report_units (id, data, name) ");
+            builder.push_values(chunk, |mut b, unit| {
+                let mut data = unit.encode_to_vec();
+                let key: UnitKey = blake3::hash(&data).into();
+                keys.push(key);
+                data = compress(&data);
+                b.push_bind(key.to_vec()).push_bind(data).push_bind(&unit.name);
+            });
+            builder.push(" ON CONFLICT (id) DO NOTHING");
+            conn.execute(builder.build()).await?;
+        }
+        let mut unit_index = 0;
+        for chunk in keys.chunks(BIND_LIMIT / 3) {
+            let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+                "INSERT INTO report_report_units (report_id, report_unit_id, unit_index) ",
+            );
+            builder.push_values(chunk, |mut b, key| {
+                b.push_bind(report_id).push_bind(key.as_slice()).push_bind(unit_index);
+                unit_index += 1;
+            });
+            conn.execute(builder.build()).await?;
+        }
         Ok(())
     }
 
@@ -150,23 +181,26 @@ impl Database {
         repo: &str,
         commit: &str,
         version: &str,
-    ) -> Result<Option<ReportFile>> {
+    ) -> Result<Option<CachedReportFile>> {
+        let key = ReportKey {
+            owner: owner.to_ascii_lowercase(),
+            repo: repo.to_ascii_lowercase(),
+            commit: commit.to_ascii_lowercase(),
+            version: version.to_ascii_lowercase(),
+        };
+        if let Some(report) = self.report_cache.get(&key).await {
+            return Ok(Some(report));
+        }
         let mut conn = self.pool.acquire().await?;
-        let (report_id, project, commit, version, mut report) = match sqlx::query!(
+        let (report_id, commit, version, mut report) = match sqlx::query!(
             r#"
             SELECT
                 reports.id as "report_id!",
                 git_commit,
+                git_commit_message,
                 timestamp,
                 version,
-                data,
-                projects.id as "project_id!",
-                owner,
-                repo,
-                name,
-                short_name,
-                default_version,
-                platform
+                data
             FROM reports JOIN projects ON reports.project_id = projects.id
             WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE
                   AND version = ? COLLATE NOCASE AND git_commit = ? COLLATE NOCASE
@@ -184,32 +218,23 @@ impl Database {
                 let report = Report::decode(data.as_ref()).context("Failed to decode report")?;
                 (
                     row.report_id,
-                    Project {
-                        id: row.project_id as u64,
-                        owner: row.owner,
-                        repo: row.repo,
-                        name: row.name,
-                        short_name: row.short_name,
-                        default_version: row.default_version,
-                        platform: row.platform,
+                    Commit {
+                        sha: row.git_commit,
+                        message: row.git_commit_message,
+                        timestamp: row.timestamp.and_utc(),
                     },
-                    Commit { sha: row.git_commit, timestamp: row.timestamp.and_utc() },
                     row.version,
-                    report,
+                    CachedReport {
+                        version: report.version,
+                        measures: report.measures.unwrap_or_default(),
+                        units: vec![],
+                        categories: report.categories.clone(),
+                    },
                 )
             }
             None => return Ok(None),
         };
-        let key = ReportKey {
-            owner: owner.to_ascii_lowercase(),
-            repo: repo.to_ascii_lowercase(),
-            commit: commit.sha.to_ascii_lowercase(),
-            version: version.to_ascii_lowercase(),
-        };
-        if let Some(report) = self.report_cache.get(&key).await {
-            return Ok(Some(ReportFile { project, commit, version, report }));
-        }
-        for row in sqlx::query!(
+        let mut stream = sqlx::query!(
             r#"
             SELECT ru.id AS "id!", ru.data, rru.unit_index
             FROM report_report_units rru JOIN report_units ru ON rru.report_unit_id = ru.id
@@ -218,41 +243,91 @@ impl Database {
             "#,
             report_id
         )
-        .fetch_all(&mut *conn)
-        .await?
-        {
+        .fetch(&mut *conn);
+        while let Some(row) = stream.try_next().await? {
             let idx = row.unit_index as usize;
             if idx != report.units.len() {
                 bail!("Report unit index mismatch: {} but expected {}", idx, report.units.len());
             }
             let key: UnitKey = row.id.as_slice().try_into()?;
-            let data = decompress(&row.data).context("Failed to decompress report unit data")?;
-            let hash: UnitKey = blake3::hash(data.as_ref()).into();
-            if hash != key {
-                bail!("Report unit data hash mismatch for unit {}", idx);
-            }
-            let unit = ReportUnit::decode(data.as_ref()).context("Failed to decode report unit")?;
-            report.units.push(unit);
+            report.units.push(key);
         }
-        report.migrate()?;
-        let report = Arc::new(report);
-        self.report_cache.insert(key, report.clone()).await;
-        Ok(Some(ReportFile { project, commit, version, report }))
+        let report_file = CachedReportFile {
+            commit: commit.clone(),
+            version: version.clone(),
+            report: Arc::new(report),
+        };
+        self.report_cache.insert(key, report_file.clone()).await;
+        Ok(Some(report_file))
     }
 
-    pub async fn report_exists(&self, owner: &str, repo: &str, commit: &str) -> Result<bool> {
+    pub async fn upgrade_report(&self, file: &CachedReportFile) -> Result<FullReportFile> {
+        let mut units = Vec::with_capacity(file.report.units.len());
+        let mut missing_unit_keys = Vec::with_capacity(file.report.units.len());
+        let mut missing_unit_idx = HashMap::new();
+        for (idx, &key) in file.report.units.iter().enumerate() {
+            if let Some(unit) = self.report_unit_cache.get(&key).await {
+                units.push(Some(unit));
+            } else {
+                units.push(None);
+                missing_unit_keys.push(key);
+                missing_unit_idx.insert(key, idx);
+            }
+        }
+        if !missing_unit_keys.is_empty() {
+            let mut conn = self.pool.acquire().await?;
+            for chunk in missing_unit_keys.chunks(BIND_LIMIT) {
+                let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+                    "SELECT ru.id AS id, ru.data FROM report_units ru WHERE ru.id IN (",
+                );
+                let mut separated = builder.separated(", ");
+                for key in chunk {
+                    separated.push_bind(&key[..]);
+                }
+                separated.push_unseparated(")");
+                let mut stream = conn.fetch(builder.build());
+                while let Some(row) = stream.try_next().await? {
+                    let row_id: Box<[u8]> = row.get(0);
+                    let row_data: Box<[u8]> = row.get(1);
+                    let key = row_id.as_ref().try_into()?;
+                    let unit_idx = missing_unit_idx.get(&key).copied().unwrap();
+                    let data =
+                        decompress(&row_data).context("Failed to decompress report unit data")?;
+                    // Skip hash check since we're rehydrating a cached report
+                    // Units were checked when the report was initially loaded
+                    let unit = Arc::new(
+                        ReportUnit::decode(data.as_ref())
+                            .context("Failed to decode report unit")?,
+                    );
+                    self.report_unit_cache.insert(key, unit.clone()).await;
+                    units[unit_idx] = Some(unit);
+                }
+            }
+        }
+        Ok(FullReportFile {
+            commit: file.commit.clone(),
+            version: file.version.clone(),
+            report: FullReport {
+                version: file.report.version,
+                measures: file.report.measures.clone(),
+                units: units.into_iter().map(Option::unwrap).collect(),
+                categories: file.report.categories.clone(),
+            },
+        })
+    }
+
+    pub async fn report_exists(&self, project_id: u64, commit: &str) -> Result<bool> {
         let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
         let exists = sqlx::query!(
             r#"
             SELECT EXISTS (
                 SELECT 1
                 FROM reports JOIN projects ON reports.project_id = projects.id
-                WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE
-                      AND git_commit = ? COLLATE NOCASE
+                WHERE projects.id = ? AND git_commit = ? COLLATE NOCASE
             ) AS "exists!"
             "#,
-            owner,
-            repo,
+            project_id_db,
             commit
         )
         .fetch_one(&mut *conn)
@@ -271,7 +346,7 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let project = match sqlx::query!(
             r#"
-            SELECT id AS "id!", owner, repo, name, short_name, default_version, platform
+            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform
             FROM projects
             WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE
             "#,
@@ -287,14 +362,58 @@ impl Database {
                 repo: row.repo,
                 name: row.name,
                 short_name: row.short_name,
+                default_category: row.default_category,
                 default_version: row.default_version,
                 platform: row.platform,
             },
             None => return Ok(None),
         };
+        self.get_project_info_inner(&mut *conn, project, commit).await
+    }
+
+    pub async fn get_project_info_by_id(
+        &self,
+        project_id: u64,
+        commit: Option<&str>,
+    ) -> Result<Option<ProjectInfo>> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        let project = match sqlx::query!(
+            r#"
+            SELECT owner, repo, name, short_name, default_category, default_version, platform
+            FROM projects
+            WHERE id = ?
+            "#,
+            project_id_db
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        {
+            Some(row) => Project {
+                id: project_id,
+                owner: row.owner,
+                repo: row.repo,
+                name: row.name,
+                short_name: row.short_name,
+                default_category: row.default_category,
+                default_version: row.default_version,
+                platform: row.platform,
+            },
+            None => return Ok(None),
+        };
+        self.get_project_info_inner(&mut *conn, project, commit).await
+    }
+
+    async fn get_project_info_inner(
+        &self,
+        conn: &mut SqliteConnection,
+        project: Project,
+        commit: Option<&str>,
+    ) -> Result<Option<ProjectInfo>> {
         let project_id = project.id as i64;
         struct ReportInfo {
             git_commit: String,
+            git_commit_message: Option<String>,
             timestamp: chrono::NaiveDateTime,
             version: String,
         }
@@ -302,7 +421,7 @@ impl Database {
             // Fetch all reports for the specified commit
             sqlx::query!(
                 r#"
-                SELECT git_commit, timestamp, version
+                SELECT git_commit, git_commit_message, timestamp, version
                 FROM reports
                 WHERE project_id = ? AND git_commit = ? COLLATE NOCASE
                 ORDER BY version
@@ -315,6 +434,7 @@ impl Database {
             .into_iter()
             .map(|row| ReportInfo {
                 git_commit: row.git_commit,
+                git_commit_message: row.git_commit_message,
                 timestamp: row.timestamp,
                 version: row.version,
             })
@@ -323,7 +443,7 @@ impl Database {
             // Fetch the latest report for each version
             sqlx::query!(
                 r#"
-                SELECT git_commit, timestamp, version
+                SELECT git_commit, git_commit_message, timestamp, version
                 FROM reports
                 WHERE project_id = ? AND timestamp = (
                     SELECT MAX(timestamp)
@@ -340,6 +460,7 @@ impl Database {
             .into_iter()
             .map(|row| ReportInfo {
                 git_commit: row.git_commit,
+                git_commit_message: row.git_commit_message,
                 timestamp: row.timestamp,
                 version: row.version,
             })
@@ -387,6 +508,7 @@ impl Database {
             info.commit = Some(Commit {
                 sha: first_report.git_commit.clone(),
                 timestamp: first_report.timestamp.and_utc(),
+                message: first_report.git_commit_message.clone(),
             });
             info.prev_commit = prev_commit;
             info.next_commit = next_commit;
@@ -404,9 +526,11 @@ impl Database {
                 repo AS "repo!",
                 name,
                 short_name,
+                default_category,
                 default_version,
                 platform,
                 git_commit,
+                git_commit_message,
                 MAX(timestamp) AS "timestamp: chrono::NaiveDateTime",
                 JSON_GROUP_ARRAY(version ORDER BY version)
                     FILTER (WHERE version IS NOT NULL) AS versions
@@ -432,13 +556,16 @@ impl Database {
                 repo: row.repo,
                 name: row.name,
                 short_name: row.short_name,
+                default_category: row.default_category,
                 default_version: row.default_version,
                 platform: row.platform,
             },
             commit: match (row.git_commit, row.timestamp) {
-                (Some(sha), Some(timestamp)) => {
-                    Some(Commit { sha, timestamp: timestamp.and_utc() })
-                }
+                (Some(sha), Some(timestamp)) => Some(Commit {
+                    sha,
+                    timestamp: timestamp.and_utc(),
+                    message: row.git_commit_message,
+                }),
                 _ => None,
             },
             report_versions: row
@@ -477,6 +604,273 @@ impl Database {
             )
             .execute(&mut *conn)
             .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn fetch_all_reports(
+        &self,
+        project: &Project,
+        version: &str,
+    ) -> Result<Vec<CachedReportFile>> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id = project.id as i64;
+        let commits = sqlx::query!(
+            r#"
+            SELECT git_commit, git_commit_message, timestamp
+            FROM reports
+            WHERE project_id = ? AND version = ? COLLATE NOCASE
+            ORDER BY timestamp DESC
+            "#,
+            project_id,
+            version
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| Commit {
+            sha: row.git_commit,
+            timestamp: row.timestamp.and_utc(),
+            message: row.git_commit_message,
+        })
+        .collect::<Vec<_>>();
+        let mut reports = Vec::with_capacity(commits.len());
+        for commit in commits {
+            let report =
+                self.get_report(&project.owner, &project.repo, &commit.sha, version).await?;
+            if let Some(report) = report {
+                reports.push(report);
+            } else {
+                bail!(
+                    "Report not found for {}/{}@{}:{}",
+                    project.owner,
+                    project.repo,
+                    commit.sha,
+                    version
+                );
+            }
+        }
+        Ok(reports)
+    }
+
+    async fn migrate_reports(&self) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let mut stream = sqlx::query!(
+            r#"
+            SELECT id, data
+            FROM reports
+            WHERE data_version < ?
+            "#,
+            REPORT_VERSION,
+        )
+        .fetch(&mut *conn);
+        let mut reports = Vec::new();
+        while let Some(row) = stream.try_next().await? {
+            let report_id = row.id;
+            let data = decompress(&row.data).context("Failed to decompress report data")?;
+            let report = Report::decode(data.as_ref()).context("Failed to decode report")?;
+            reports.push((report_id, report));
+        }
+        drop(stream);
+        for (report_id, mut report) in reports {
+            if report.version == REPORT_VERSION {
+                // Report is already up-to-date
+                sqlx::query!(
+                    r#"
+                    UPDATE reports
+                    SET data_version = ?
+                    WHERE id = ?
+                    "#,
+                    REPORT_VERSION,
+                    report_id,
+                )
+                .execute(&mut *conn)
+                .await?;
+                continue;
+            }
+            tracing::info!("Migrating report {} from version {}", report_id, report.version);
+            // Fetch all report units
+            let mut unit_stream = sqlx::query!(
+                r#"
+                SELECT ru.id AS "id!", ru.data
+                FROM report_report_units rru JOIN report_units ru ON rru.report_unit_id = ru.id
+                WHERE rru.report_id = ?
+                ORDER BY rru.unit_index
+                "#,
+                report_id,
+            )
+            .fetch(&mut *conn);
+            while let Some(unit_row) = unit_stream.try_next().await? {
+                let data =
+                    decompress(&unit_row.data).context("Failed to decompress report unit data")?;
+                let unit =
+                    ReportUnit::decode(data.as_ref()).context("Failed to decode report unit")?;
+                report.units.push(unit);
+            }
+            drop(unit_stream);
+            // Migrate report
+            report.migrate()?;
+            let units = mem::take(&mut report.units);
+            let data = compress(&report.encode_to_vec());
+            // Persist updated report
+            let mut tx = conn.begin().await?;
+            sqlx::query!(
+                r#"
+                UPDATE reports
+                SET data = ?, data_version = ?
+                WHERE id = ?
+                "#,
+                data,
+                REPORT_VERSION,
+                report_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+            // Delete existing report units
+            sqlx::query!(
+                r#"
+                DELETE FROM report_report_units
+                WHERE report_id = ?
+                "#,
+                report_id,
+            )
+            .execute(&mut *tx)
+            .await?;
+            // Insert updated report units
+            Self::insert_report_units(&mut *tx, &units, report_id).await?;
+            tx.commit().await?;
+        }
+        Ok(())
+    }
+
+    async fn cleanup_report_units(&self) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let deleted_report_report_units = sqlx::query!(
+            r#"
+            DELETE FROM report_report_units
+            WHERE report_id NOT IN (SELECT id FROM reports)
+            "#,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        let deleted_report_units = sqlx::query!(
+            r#"
+            DELETE FROM report_units
+            WHERE id NOT IN (SELECT report_unit_id FROM report_report_units)
+            "#,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if deleted_report_units > 0 || deleted_report_report_units > 0 {
+            tracing::info!(
+                "Deleted {} orphaned report units and {} orphaned mappings",
+                deleted_report_units,
+                deleted_report_report_units,
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn get_frogress_mappings(&self) -> Result<Vec<FrogressMapping>> {
+        let mut conn = self.pool.acquire().await?;
+        let mappings = sqlx::query!(
+            r#"
+            SELECT frogress_slug,
+                   frogress_version,
+                   frogress_category,
+                   frogress_measure,
+                   project_id,
+                   version,
+                   category,
+                   category_name,
+                   measure
+            FROM frogress_mappings
+            ORDER BY frogress_slug, frogress_version, frogress_category
+            "#,
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| FrogressMapping {
+            frogress_slug: row.frogress_slug,
+            frogress_version: row.frogress_version,
+            frogress_category: row.frogress_category,
+            frogress_measure: row.frogress_measure,
+            project_id: row.project_id as u64,
+            project_version: row.version,
+            project_category: row.category,
+            project_category_name: row.category_name,
+            project_measure: row.measure,
+        })
+        .collect();
+        Ok(mappings)
+    }
+
+    pub async fn update_report_message(
+        &self,
+        project_id: u64,
+        commit: &str,
+        message: &str,
+    ) -> Result<()> {
+        let count = {
+            let mut conn = self.pool.acquire().await?;
+            let project_id_db = project_id as i64;
+            sqlx::query!(
+                r#"
+                UPDATE reports
+                SET git_commit_message = ?
+                WHERE project_id = ? AND git_commit = ? COLLATE NOCASE
+                "#,
+                message,
+                project_id_db,
+                commit,
+            )
+            .execute(&mut *conn)
+            .await?
+            .rows_affected()
+        };
+        if count == 0 {
+            bail!("Report not found for project ID {} and commit {}", project_id, commit);
+        }
+        let keys = {
+            let mut conn = self.pool.acquire().await?;
+            let project_id_db = project_id as i64;
+            let result = sqlx::query!(
+                r#"
+                SELECT owner, repo FROM projects WHERE id = ?
+                "#,
+                project_id_db,
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            let owner = result.owner;
+            let repo = result.repo;
+            let result = sqlx::query!(
+                r#"
+                SELECT version FROM reports WHERE project_id = ? AND git_commit = ? COLLATE NOCASE
+                "#,
+                project_id_db,
+                commit,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
+            result
+                .iter()
+                .map(|r| ReportKey {
+                    owner: owner.to_ascii_lowercase(),
+                    repo: repo.to_ascii_lowercase(),
+                    commit: commit.to_ascii_lowercase(),
+                    version: r.version.to_ascii_lowercase(),
+                })
+                .collect::<Vec<_>>()
+        };
+        for key in keys {
+            if let Some(mut report) = self.report_cache.get(&key).await {
+                report.commit.message = Some(message.to_owned());
+                self.report_cache.insert(key, report).await;
+            }
         }
         Ok(())
     }

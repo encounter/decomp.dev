@@ -10,15 +10,23 @@ use chrono::{DateTime, Utc};
 use objdiff_core::bindings::report::Measures;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Semaphore, task::JoinSet};
+use url::Url;
 
-use super::AppError;
-use crate::{templates::render, AppState};
+use super::{AppError, FullUri};
+use crate::{
+    handlers::report::TemplateMeasures,
+    templates::{render, size},
+    util::UrlExt,
+    AppState,
+};
 
 #[derive(Serialize)]
-struct ProjectsTemplateContext {
+struct ProjectsTemplateContext<'a> {
     projects: Vec<ProjectInfoContext>,
     sort_options: &'static [SortOption],
     current_sort: SortOption,
+    canonical_url: &'a str,
+    image_url: &'a str,
 }
 
 #[derive(Serialize)]
@@ -31,8 +39,9 @@ struct ProjectInfoContext {
     short_name: String,
     commit: String,
     timestamp: DateTime<Utc>,
-    measures: Measures,
+    measures: TemplateMeasures,
     platform: Option<String>,
+    code_progress: Vec<ProgressSection>,
 }
 
 #[derive(Deserialize)]
@@ -48,13 +57,23 @@ struct SortOption {
 
 const SORT_OPTIONS: &[SortOption] = &[
     SortOption { key: "updated", name: "Last updated" },
-    SortOption { key: "matched_code", name: "Matched Code" },
     SortOption { key: "name", name: "Name" },
+    SortOption { key: "matched_code_percent", name: "Matched Code (Percent)" },
+    SortOption { key: "matched_code", name: "Matched Code" },
+    SortOption { key: "total_code", name: "Total Code" },
 ];
+
+#[derive(Serialize, Clone)]
+pub struct ProgressSection {
+    pub class: String,
+    pub percent: f32,
+    pub tooltip: String,
+}
 
 pub async fn get_projects(
     State(state): State<AppState>,
     Query(query): Query<ProjectsQuery>,
+    FullUri(uri): FullUri,
 ) -> Result<Response, AppError> {
     let start = Instant::now();
     let projects = state.db.get_projects().await?;
@@ -73,6 +92,7 @@ pub async fn get_projects(
                 timestamp: commit.timestamp,
                 measures: Default::default(),
                 platform: p.project.platform.clone(),
+                code_progress: vec![],
             })
         })
         .collect::<Vec<_>>();
@@ -106,7 +126,9 @@ pub async fn get_projects(
         match result {
             Ok((info, Ok(Some(file)))) => {
                 if let Some(c) = out.iter_mut().find(|i| i.id == info.project.id) {
-                    c.measures = file.report.measures.unwrap_or_default();
+                    let measures = file.report.measures(info.project.default_category.as_deref());
+                    c.measures = TemplateMeasures::from(measures);
+                    c.code_progress = code_progress_sections(measures);
                 }
             }
             Ok((info, Ok(None))) => {
@@ -130,21 +152,117 @@ pub async fn get_projects(
     match current_sort.key {
         "name" => out.sort_by(|a, b| a.name.cmp(&b.name)),
         "updated" => out.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)),
-        "matched_code" => out.sort_by(|a, b| {
+        "matched_code_percent" => out.sort_by(|a, b| {
             b.measures
                 .matched_code_percent
                 .partial_cmp(&a.measures.matched_code_percent)
                 .unwrap_or(std::cmp::Ordering::Equal)
         }),
+        "matched_code" => out.sort_by(|a, b| {
+            b.measures
+                .matched_code
+                .partial_cmp(&a.measures.matched_code)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        "total_code" => out.sort_by(|a, b| {
+            b.measures
+                .total_code
+                .partial_cmp(&a.measures.total_code)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
         _ => return Err(AppError::Status(StatusCode::BAD_REQUEST)),
     }
+
+    let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
+    let canonical_url = request_url.with_path("");
+    let image_url = canonical_url.with_path("/og.png");
 
     let mut rendered = render(&state.templates, "projects.html", ProjectsTemplateContext {
         projects: out,
         sort_options: SORT_OPTIONS,
         current_sort,
+        canonical_url: canonical_url.as_str(),
+        image_url: image_url.as_str(),
     })?;
     let elapsed = start.elapsed();
     rendered = rendered.replace("[[time]]", &format!("{}ms", elapsed.as_millis()));
     Ok(Html(rendered).into_response())
+}
+
+pub fn code_progress_sections(measures: &Measures) -> Vec<ProgressSection> {
+    let mut out = vec![];
+    if measures.total_code == 0 {
+        return out;
+    }
+    let mut add_section = |class: &str, percent: f32, tooltip: String| {
+        out.push(ProgressSection { class: class.to_owned(), percent, tooltip });
+    };
+    let mut current_percent = 0.0;
+    if measures.complete_code_percent > 0.0 {
+        add_section(
+            "progress-section",
+            measures.complete_code_percent - current_percent,
+            format!(
+                "{:.2}% fully linked ({})",
+                measures.complete_code_percent,
+                size(measures.complete_code)
+            ),
+        );
+        current_percent = measures.complete_code_percent;
+    }
+    if measures.matched_code_percent > 0.0 && measures.matched_code_percent > current_percent {
+        add_section(
+            if current_percent > 0.0 { "progress-section striped" } else { "progress-section" },
+            measures.matched_code_percent - current_percent,
+            format!(
+                "{:.2}% perfect match ({})",
+                measures.matched_code_percent,
+                size(measures.matched_code)
+            ),
+        );
+        current_percent = measures.matched_code_percent;
+    }
+    if measures.fuzzy_match_percent > 0.0 && measures.fuzzy_match_percent > current_percent {
+        add_section(
+            "progress-section striped fuzzy",
+            measures.fuzzy_match_percent - current_percent,
+            format!("{:.2}% fuzzy match", measures.fuzzy_match_percent),
+        );
+    }
+    out
+}
+
+pub fn data_progress_sections(measures: &Measures) -> Vec<ProgressSection> {
+    let mut out = vec![];
+    if measures.total_data == 0 {
+        return out;
+    }
+    let mut add_section = |class: &str, percent: f32, tooltip: String| {
+        out.push(ProgressSection { class: class.to_owned(), percent, tooltip });
+    };
+    let mut current_percent = 0.0;
+    if measures.complete_data_percent > 0.0 {
+        add_section(
+            "progress-section",
+            measures.complete_data_percent - current_percent,
+            format!(
+                "{:.2}% fully linked ({})",
+                measures.complete_data_percent,
+                size(measures.complete_data)
+            ),
+        );
+        current_percent = measures.complete_data_percent;
+    }
+    if measures.matched_data_percent > 0.0 && measures.matched_data_percent > current_percent {
+        add_section(
+            if current_percent > 0.0 { "progress-section striped" } else { "progress-section" },
+            measures.matched_data_percent - current_percent,
+            format!(
+                "{:.2}% perfect match ({})",
+                measures.matched_data_percent,
+                size(measures.matched_data)
+            ),
+        );
+    }
+    out
 }

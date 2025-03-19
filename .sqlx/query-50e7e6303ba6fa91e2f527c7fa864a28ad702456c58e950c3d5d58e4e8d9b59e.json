@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT git_commit, timestamp\n            FROM reports\n            WHERE project_id = ? AND version = ? COLLATE NOCASE\n            ORDER BY timestamp DESC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "git_commit",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "timestamp",
+        "ordinal": 1,
+        "type_info": "Datetime"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "50e7e6303ba6fa91e2f527c7fa864a28ad702456c58e950c3d5d58e4e8d9b59e"
+}
