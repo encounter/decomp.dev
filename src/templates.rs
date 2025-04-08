@@ -31,15 +31,20 @@ where S: serde::Serialize {
 }
 
 fn timeago(value: String) -> String {
-    let value = DateTime::parse_from_rfc3339(&value).unwrap_or_default();
-    let duration = Utc::now().signed_duration_since(value);
-    timeago::Formatter::new().convert(duration.to_std().unwrap())
+    let Ok(value) = DateTime::parse_from_rfc3339(&value) else {
+        return "[invalid]".to_string();
+    };
+    let Ok(duration) = Utc::now().signed_duration_since(value).to_std() else {
+        return "[out of range]".to_string();
+    };
+    timeago::Formatter::new().convert(duration)
 }
 
 fn date(value: String, format: Option<String>) -> String {
-    let value = DateTime::parse_from_rfc3339(&value).unwrap_or_default();
-    let format = format.as_deref().unwrap_or("%Y-%m-%d %H:%M:%S %Z");
-    value.format(format).to_string()
+    let Ok(value) = DateTime::parse_from_rfc3339(&value) else {
+        return "[invalid]".to_string();
+    };
+    value.format(format.as_deref().unwrap_or("%Y-%m-%d %H:%M:%S %Z")).to_string()
 }
 
 /// Format a size in bytes to a human-readable string.
