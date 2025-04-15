@@ -168,23 +168,34 @@ impl From<&Measures> for TemplateMeasures {
     }
 }
 
+fn is_valid_extension(ext: &str) -> bool {
+    // FIXME: hack for versions that have .nn where nn is a number
+    ext.chars().any(|c| c.is_ascii_alphabetic())
+}
+
 fn extract_extension(params: ReportParams) -> (ReportParams, Option<String>) {
     if let Some(commit) = params.commit.as_deref() {
         if let Some((commit, ext)) = commit.rsplit_once('.') {
-            return (
-                ReportParams { commit: Some(commit.to_string()), ..params },
-                Some(ext.to_string()),
-            );
+            if is_valid_extension(ext) {
+                return (
+                    ReportParams { commit: Some(commit.to_string()), ..params },
+                    Some(ext.to_string()),
+                );
+            }
         }
     } else if let Some(version) = params.version.as_deref() {
         if let Some((version, ext)) = version.rsplit_once('.') {
-            return (
-                ReportParams { version: Some(version.to_string()), ..params },
-                Some(ext.to_string()),
-            );
+            if is_valid_extension(ext) {
+                return (
+                    ReportParams { version: Some(version.to_string()), ..params },
+                    Some(ext.to_string()),
+                );
+            }
         }
     } else if let Some((repo, ext)) = params.repo.rsplit_once('.') {
-        return (ReportParams { repo: repo.to_string(), ..params }, Some(ext.to_string()));
+        if is_valid_extension(ext) {
+            return (ReportParams { repo: repo.to_string(), ..params }, Some(ext.to_string()));
+        }
     }
     (params, None)
 }

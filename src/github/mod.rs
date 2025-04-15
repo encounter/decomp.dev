@@ -107,11 +107,12 @@ pub async fn run(
         .send()
         .await
         .context("Failed to fetch workflows")?;
-    let Some(workflow) = workflows
-        .items
-        .iter()
-        .find(|w| w.path.ends_with("build.yml") || w.path.ends_with("progress.yml"))
-    else {
+    let Some(workflow) = workflows.items.iter().find(|w| {
+        w.path.ends_with("build.yml")
+            || w.path.ends_with("build.yaml")
+            || w.path.ends_with("progress.yml")
+            || w.path.ends_with("progress.yaml")
+    }) else {
         log::warn!("No known workflow found for {}/{}", owner_name, repo_name);
         return Ok(());
     };
@@ -268,7 +269,7 @@ async fn process_workflow_run(
     }
     static REGEX: OnceLock<Regex> = OnceLock::new();
     let regex = REGEX
-        .get_or_init(|| Regex::new(r"^(?P<version>[A-z0-9_\-]+)[_-]report(?:[_-].*)?$").unwrap());
+        .get_or_init(|| Regex::new(r"^(?P<version>[A-z0-9_.\-]+)[_-]report(?:[_-].*)?$").unwrap());
     let sem = Arc::new(Semaphore::new(3));
     let mut set = JoinSet::new();
     struct TaskResult {
