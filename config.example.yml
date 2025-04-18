@@ -1,6 +1,12 @@
 server:
   port: 3000
 
-app:
-  db_url: sqlite:./db.sqlite
-  github_token: ghp_abcd1234abcd1234abcd1234abcd1234abcd
+db:
+  url: sqlite:./db.sqlite
+
+github:
+  # Personal access token for public repo access
+  token: ghp_abcd1234abcd1234abcd1234abcd1234abcd
+
+openai:
+  api_key: sk-proj-abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234

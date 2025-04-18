@@ -10,12 +10,17 @@ use axum::{
 use image::ImageFormat;
 use mime::Mime;
 use objdiff_core::bindings::report::{Measures, ReportCategory, ReportUnit};
+use octocrab::models::Author;
 use serde::{Deserialize, Serialize};
+use time::format_description::well_known::Rfc3339;
 use url::Url;
 
 use super::{badge, parse_accept, treemap, AppError, FullUri, Protobuf, PROTOBUF};
 use crate::{
-    handlers::project::{code_progress_sections, data_progress_sections, ProgressSection},
+    handlers::{
+        auth::CurrentUser,
+        project::{code_progress_sections, data_progress_sections, ProgressSection},
+    },
     models::{FullReportFile, Project, ProjectInfo},
     templates::render,
     util::UrlExt,
@@ -78,6 +83,7 @@ struct ReportTemplateContext<'a> {
     source_file_url: Option<&'a str>,
     code_progress: Vec<ProgressSection>,
     data_progress: Vec<ProgressSection>,
+    current_user: Option<Author>,
 }
 
 #[derive(Serialize)]
@@ -206,6 +212,7 @@ pub async fn get_report(
     headers: HeaderMap,
     FullUri(uri): FullUri,
     State(state): State<AppState>,
+    current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
     let start = Instant::now();
     let (params, ext) = extract_extension(params);
@@ -246,7 +253,7 @@ pub async fn get_report(
     let scope = apply_scope(&report, &project_info, &query)?;
     match query.mode.as_deref().unwrap_or("report").to_ascii_lowercase().as_str() {
         "shield" => mode_shield(&scope, query, &acceptable),
-        "report" => mode_report(&scope, &state, uri, query, start, &acceptable).await,
+        "report" => mode_report(&scope, &state, uri, query, start, &acceptable, current_user).await,
         "measures" => mode_measures(&scope, &acceptable),
         "history" => mode_history(&scope, &state, query, &acceptable).await,
         _ => Err(AppError::Status(StatusCode::BAD_REQUEST)),
@@ -261,12 +268,13 @@ async fn mode_report(
     query: ReportQuery,
     start: Instant,
     acceptable: &[Mime],
+    current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
     for mime in acceptable {
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
-            let mut rendered = render_template(scope, state, uri).await?;
+            let mut rendered = render_template(scope, state, uri, current_user).await?;
             let elapsed = start.elapsed();
             rendered = rendered.replace("[[time]]", &format!("{}ms", elapsed.as_millis()));
             return Ok(Html(rendered).into_response());
@@ -385,7 +393,11 @@ async fn mode_history(
             continue;
         };
         result.push(ReportHistoryEntry {
-            timestamp: report.commit.timestamp.to_rfc3339(),
+            timestamp: report
+                .commit
+                .timestamp
+                .format(&Rfc3339)
+                .unwrap_or_else(|_| "[invalid]".to_string()),
             commit_sha: report.commit.sha,
             measures: TemplateMeasures::from(measures.as_ref()),
         });
@@ -529,7 +541,12 @@ fn apply_scope<'a>(
     Ok(Scope { report, project_info, measures, current_category, current_unit, units, label })
 }
 
-async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Result<String> {
+async fn render_template(
+    scope: &Scope<'_>,
+    state: &AppState,
+    uri: Uri,
+    current_user: Option<CurrentUser>,
+) -> Result<String> {
     let Scope { report, project_info, measures, current_category, current_unit, units, label } =
         scope;
 
@@ -668,5 +685,6 @@ async fn render_template(scope: &Scope<'_>, state: &AppState, uri: Uri) -> Resul
         source_file_url: source_file_url.as_deref(),
         code_progress: code_progress_sections(measures),
         data_progress: data_progress_sections(measures),
+        current_user: current_user.map(|u| u.profile),
     })
 }

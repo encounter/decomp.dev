@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT frogress_slug,\n                   frogress_version,\n                   frogress_category,\n                   frogress_measure,\n                   project_id,\n                   version,\n                   category,\n                   category_name,\n                   measure\n            FROM frogress_mappings\n            ORDER BY frogress_slug, frogress_version, frogress_category\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "frogress_slug",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "frogress_version",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "frogress_category",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "frogress_measure",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "project_id",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "version",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "category_name",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "measure",
+        "ordinal": 8,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0ca422ccf34a2f1a8d15f5f620821c1a65f7678ea1929b61885dde31bc4b6f24"
+}

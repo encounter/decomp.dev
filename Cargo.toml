@@ -6,31 +6,30 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 ariadne = { version = "0.4", features = ["auto-color"] }
-axum = "0.7"
+axum = { version = "0.8", features = ["macros"] }
 badge-maker = "0.3"
 blake3 = "1.5"
 bytes = "1.7"
-chrono = "0.4"
 futures-util = "0.3.31"
 grass = "0.13"
 hex = "0.4"
 human-size = "0.4"
 image = "0.25"
-itertools = "0.13"
-lightningcss = "1.0.0-alpha.59"
+itertools = "0.14"
+lightningcss = "1.0.0-alpha.65"
 mime = "0.3"
-minijinja = { version = "2.3", features = ["loader", "json"] }
-minijinja-autoreload = "2.3"
+minijinja = { version = "2.9", features = ["loader", "json"] }
+minijinja-autoreload = "2.9"
 moka = { version = "0.12", features = ["future"] }
-objdiff-core = { version = "2.2", features = ["bindings"] }
+objdiff-core = { version = "2.5", features = ["bindings"] }
 #objdiff-core = { path = "../objdiff/objdiff-core", features = ["bindings"] }
-octocrab = "0.41"
+octocrab = { version = "0.44", features = ["stream"] }
 oxc = { version = "0.31", features = ["codegen", "minifier", "transformer", "semantic"] }
 palette = "0.7"
 prost = "0.13"
 regex = "1.11"
 reqwest = { version = "0.12", features = ["json", "gzip", "zstd"] }
-resvg = "0.44"
+resvg = "0.45"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -44,5 +43,14 @@ tower-http = { version = "0.6", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5", features = ["serde"] }
-zip = { version = "2.2", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "2.6", default-features = false, features = ["flate2", "deflate-flate2"] }
 zstd = "0.13"
+jsonwebtoken = "9.3"
+hmac = "0.12"
+sha2 = "0.10"
+async-openai = "0.28"
+tower-sessions = "0.14"
+tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"] }
+time = { version = "0.3", features = ["local-offset"] }
+rand = "0.9"
+base64 = "0.22"

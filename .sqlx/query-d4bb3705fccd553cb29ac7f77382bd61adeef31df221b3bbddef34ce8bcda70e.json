@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                SELECT version FROM reports WHERE project_id = ? AND git_commit = ? COLLATE NOCASE\n                ",
+  "describe": {
+    "columns": [
+      {
+        "name": "version",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d4bb3705fccd553cb29ac7f77382bd61adeef31df221b3bbddef34ce8bcda70e"
+}

@@ -1,9 +1,10 @@
+#![allow(unused)]
 use std::collections::HashMap;
 
-use anyhow::{anyhow, bail, Result};
-use chrono::{MappedLocalTime, TimeZone, Utc};
+use anyhow::{anyhow, bail, Context, Result};
 use itertools::Itertools;
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory};
+use time::UtcDateTime;
 use tracing::log;
 
 use crate::{models::Commit, AppState};
@@ -97,19 +98,13 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
                     );
                     continue;
                 }
-                let timestamp = match Utc.timestamp_opt(entry.timestamp as i64, 0) {
-                    MappedLocalTime::Single(t) => t,
-                    MappedLocalTime::Ambiguous(t, _) => t,
-                    MappedLocalTime::None => {
-                        bail!(
+                let timestamp = UtcDateTime::from_unix_timestamp(entry.timestamp as i64)
+                    .with_context(|| {
+                        format!(
                             "Invalid timestamp {} for {}/{}/{}",
-                            entry.timestamp,
-                            slug,
-                            version,
-                            category
-                        );
-                    }
-                };
+                            entry.timestamp, slug, version, category
+                        )
+                    })?;
                 let commit = commits.entry(entry.git_hash.clone()).or_insert_with(|| Commit {
                     sha: entry.git_hash.clone(),
                     message: (!entry.description.is_empty()).then(|| entry.description.clone()),
@@ -146,7 +141,7 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
                     let percent =
                         if total == 0 { 100.0 } else { (value as f32 / total as f32) * 100.0 };
                     let measures = if mapping.project_category == "all" {
-                        report.measures.get_or_insert_with(|| Default::default())
+                        report.measures.get_or_insert_with(Default::default)
                     } else {
                         let mut category = report
                             .categories
@@ -161,7 +156,7 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
                             category = report.categories.last_mut();
                         }
                         let category = category.unwrap();
-                        category.measures.get_or_insert_with(|| Default::default())
+                        category.measures.get_or_insert_with(Default::default)
                     };
                     match mapping.project_measure.as_str() {
                         "matched_code" => {

@@ -9,9 +9,9 @@ use prost::Message;
 use sqlx::{
     migrate::MigrateDatabase, Connection, Executor, Pool, Row, Sqlite, SqliteConnection, SqlitePool,
 };
-
+use time::{OffsetDateTime, UtcOffset};
 use crate::{
-    config::AppConfig,
+    config::DbConfig,
     models::{
         CachedReport, CachedReportFile, Commit, FrogressMapping, FullReport, FullReportFile,
         Project, ProjectInfo,
@@ -20,7 +20,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct Database {
-    pool: Pool<Sqlite>,
+    pub pool: Pool<Sqlite>,
     report_cache: Cache<ReportKey, CachedReportFile>,
     report_unit_cache: Cache<UnitKey, Arc<ReportUnit>>,
 }
@@ -40,14 +40,14 @@ pub type UnitKey = [u8; 32];
 const BIND_LIMIT: usize = 32766;
 
 impl Database {
-    pub async fn new(config: &AppConfig) -> Result<Self> {
-        if !Sqlite::database_exists(&config.db_url).await.unwrap_or(false) {
-            tracing::info!(db_url = %config.db_url, "Creating database");
-            Sqlite::create_database(&config.db_url).await.context("Failed to create database")?;
+    pub async fn new(config: &DbConfig) -> Result<Self> {
+        if !Sqlite::database_exists(&config.url).await.unwrap_or(false) {
+            tracing::info!(url = %config.url, "Creating database");
+            Sqlite::create_database(&config.url).await.context("Failed to create database")?;
             tracing::info!("Database created");
         }
         let pool =
-            SqlitePool::connect(&config.db_url).await.context("Failed to connect to database")?;
+            SqlitePool::connect(&config.url).await.context("Failed to connect to database")?;
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
@@ -74,14 +74,14 @@ impl Database {
         let db = Self { pool, report_cache, report_unit_cache };
         db.fixup_report_units().await?;
         db.migrate_reports().await?;
-        db.cleanup_report_units().await?;
+        // db.cleanup_report_units().await?;
         Ok(db)
     }
 
     pub async fn close(&self) { self.pool.close().await }
 
     pub async fn insert_report(
-        &mut self,
+        &self,
         project: &Project,
         commit: &Commit,
         version: &str,
@@ -108,6 +108,7 @@ impl Database {
         report.migrate()?;
         let units = mem::take(&mut report.units);
         let data = compress(&report.encode_to_vec());
+        let timestamp = commit.timestamp.to_offset(UtcOffset::UTC);
         let report_id = sqlx::query!(
             r#"
             INSERT INTO reports (project_id, version, git_commit, timestamp, data, data_version)
@@ -119,7 +120,7 @@ impl Database {
             project_id,
             version,
             commit.sha,
-            commit.timestamp,
+            timestamp,
             data,
             report.version,
         )
@@ -221,7 +222,7 @@ impl Database {
                     Commit {
                         sha: row.git_commit,
                         message: row.git_commit_message,
-                        timestamp: row.timestamp.and_utc(),
+                        timestamp: row.timestamp.to_utc(),
                     },
                     row.version,
                     CachedReport {
@@ -309,7 +310,7 @@ impl Database {
             version: file.version.clone(),
             report: FullReport {
                 version: file.report.version,
-                measures: file.report.measures.clone(),
+                measures: file.report.measures,
                 units: units.into_iter().map(Option::unwrap).collect(),
                 categories: file.report.categories.clone(),
             },
@@ -346,7 +347,7 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let project = match sqlx::query!(
             r#"
-            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform
+            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id
             FROM projects
             WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE
             "#,
@@ -365,6 +366,7 @@ impl Database {
                 default_category: row.default_category,
                 default_version: row.default_version,
                 platform: row.platform,
+                workflow_id: row.workflow_id,
             },
             None => return Ok(None),
         };
@@ -380,7 +382,7 @@ impl Database {
         let project_id_db = project_id as i64;
         let project = match sqlx::query!(
             r#"
-            SELECT owner, repo, name, short_name, default_category, default_version, platform
+            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id
             FROM projects
             WHERE id = ?
             "#,
@@ -398,6 +400,7 @@ impl Database {
                 default_category: row.default_category,
                 default_version: row.default_version,
                 platform: row.platform,
+                workflow_id: row.workflow_id,
             },
             None => return Ok(None),
         };
@@ -414,7 +417,7 @@ impl Database {
         struct ReportInfo {
             git_commit: String,
             git_commit_message: Option<String>,
-            timestamp: chrono::NaiveDateTime,
+            timestamp: OffsetDateTime,
             version: String,
         }
         let reports = if let Some(commit) = commit {
@@ -475,7 +478,7 @@ impl Database {
         };
         if let Some(first_report) = reports.first() {
             // Fetch previous and next commits
-            let timestamp = first_report.timestamp.and_utc();
+            let timestamp = first_report.timestamp;
             let prev_commit = sqlx::query!(
                 r#"
                 SELECT git_commit
@@ -507,7 +510,7 @@ impl Database {
 
             info.commit = Some(Commit {
                 sha: first_report.git_commit.clone(),
-                timestamp: first_report.timestamp.and_utc(),
+                timestamp: first_report.timestamp.to_utc(),
                 message: first_report.git_commit_message.clone(),
             });
             info.prev_commit = prev_commit;
@@ -529,9 +532,10 @@ impl Database {
                 default_category,
                 default_version,
                 platform,
+                workflow_id,
                 git_commit,
                 git_commit_message,
-                MAX(timestamp) AS "timestamp: chrono::NaiveDateTime",
+                MAX(timestamp) AS "timestamp: time::OffsetDateTime",
                 JSON_GROUP_ARRAY(version ORDER BY version)
                     FILTER (WHERE version IS NOT NULL) AS versions
             FROM projects LEFT JOIN reports ON (
@@ -559,11 +563,12 @@ impl Database {
                 default_category: row.default_category,
                 default_version: row.default_version,
                 platform: row.platform,
+                workflow_id: row.workflow_id,
             },
             commit: match (row.git_commit, row.timestamp) {
                 (Some(sha), Some(timestamp)) => Some(Commit {
                     sha,
-                    timestamp: timestamp.and_utc(),
+                    timestamp: timestamp.to_utc(),
                     message: row.git_commit_message,
                 }),
                 _ => None,
@@ -630,7 +635,7 @@ impl Database {
         .into_iter()
         .map(|row| Commit {
             sha: row.git_commit,
-            timestamp: row.timestamp.and_utc(),
+            timestamp: row.timestamp.to_utc(),
             message: row.git_commit_message,
         })
         .collect::<Vec<_>>();
@@ -743,7 +748,7 @@ impl Database {
         Ok(())
     }
 
-    async fn cleanup_report_units(&self) -> Result<()> {
+    pub async fn cleanup_report_units(&self) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
         let deleted_report_report_units = sqlx::query!(
             r#"
@@ -872,6 +877,50 @@ impl Database {
                 self.report_cache.insert(key, report).await;
             }
         }
+        Ok(())
+    }
+
+    pub async fn update_project_workflow_id(
+        &self,
+        project_id: u64,
+        workflow_id: &str,
+    ) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        sqlx::query!(
+            r#"
+            UPDATE projects
+            SET workflow_id = ?
+            WHERE id = ?
+            "#,
+            workflow_id,
+            project_id_db,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_project_owner_repo(
+        &self,
+        project_id: u64,
+        owner: &str,
+        repo: &str,
+    ) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        sqlx::query!(
+            r#"
+            UPDATE projects
+            SET owner = ?, repo = ?
+            WHERE id = ?
+            "#,
+            owner,
+            repo,
+            project_id_db,
+        )
+        .execute(&mut *conn)
+        .await?;
         Ok(())
     }
 }

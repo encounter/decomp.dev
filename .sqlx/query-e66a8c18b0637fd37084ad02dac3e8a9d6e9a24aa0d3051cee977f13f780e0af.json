@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                reports.id as \"report_id!\",\n                git_commit,\n                git_commit_message,\n                timestamp,\n                version,\n                data\n            FROM reports JOIN projects ON reports.project_id = projects.id\n            WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE\n                  AND version = ? COLLATE NOCASE AND git_commit = ? COLLATE NOCASE\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "report_id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "git_commit",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "git_commit_message",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "timestamp",
+        "ordinal": 3,
+        "type_info": "Datetime"
+      },
+      {
+        "name": "version",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "data",
+        "ordinal": 5,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "e66a8c18b0637fd37084ad02dac3e8a9d6e9a24aa0d3051cee977f13f780e0af"
+}

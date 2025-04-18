@@ -1,11 +1,10 @@
 use std::{convert::Infallible, net::SocketAddr, str::FromStr};
 
 use axum::{
-    async_trait,
     extract::{ConnectInfo, FromRequestParts, OriginalUri},
     http::{header, request::Parts, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Extension, Router,
 };
 use bytes::BytesMut;
@@ -15,8 +14,10 @@ use prost::Message;
 use crate::AppState;
 
 mod assets;
+mod auth;
 mod badge;
 mod css;
+mod github;
 mod js;
 mod og;
 mod project;
@@ -25,14 +26,18 @@ mod treemap;
 
 pub fn build_router() -> Router<AppState> {
     Router::new()
-        .route("/css/*filename", get(css::get_css))
-        .route("/js/*filename", get(js::get_js))
-        .route("/assets/*filename", get(assets::get_asset))
+        .route("/api/github/webhook", post(github::webhook))
+        .route("/api/github/oauth", get(auth::oauth))
+        .route("/login", get(auth::login))
+        .route("/logout", post(auth::logout))
+        .route("/css/{*filename}", get(css::get_css))
+        .route("/js/{*filename}", get(js::get_js))
+        .route("/assets/{*filename}", get(assets::get_asset))
         .route("/og.png", get(og::get_og))
         .route("/", get(project::get_projects))
-        .route("/:owner/:repo", get(report::get_report))
-        .route("/:owner/:repo/:version", get(report::get_report))
-        .route("/:owner/:repo/:version/:commit", get(report::get_report))
+        .route("/{owner}/{repo}", get(report::get_report))
+        .route("/{owner}/{repo}/{version}", get(report::get_report))
+        .route("/{owner}/{repo}/{version}/{commit}", get(report::get_report))
 }
 
 pub enum AppError {
@@ -112,7 +117,6 @@ impl<T: Message> IntoResponse for Protobuf<'_, T> {
 /// Uses the `x-forwarded-proto` and `x-forwarded-host` headers if present.
 pub struct FullUri(pub Uri);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for FullUri
 where S: Send + Sync
 {

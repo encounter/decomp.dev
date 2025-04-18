@@ -6,15 +6,16 @@ use axum::{
     http::StatusCode,
     response::{Html, IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
 use objdiff_core::bindings::report::Measures;
+use octocrab::models::Author;
 use serde::{Deserialize, Serialize};
+use time::UtcDateTime;
 use tokio::{sync::Semaphore, task::JoinSet};
 use url::Url;
 
 use super::{AppError, FullUri};
 use crate::{
-    handlers::report::TemplateMeasures,
+    handlers::{auth::CurrentUser, report::TemplateMeasures},
     templates::{render, size},
     util::UrlExt,
     AppState,
@@ -27,6 +28,7 @@ struct ProjectsTemplateContext<'a> {
     current_sort: SortOption,
     canonical_url: &'a str,
     image_url: &'a str,
+    current_user: Option<Author>,
 }
 
 #[derive(Serialize)]
@@ -38,7 +40,7 @@ struct ProjectInfoContext {
     name: String,
     short_name: String,
     commit: String,
-    timestamp: DateTime<Utc>,
+    timestamp: UtcDateTime,
     measures: TemplateMeasures,
     platform: Option<String>,
     code_progress: Vec<ProgressSection>,
@@ -74,6 +76,7 @@ pub async fn get_projects(
     State(state): State<AppState>,
     Query(query): Query<ProjectsQuery>,
     FullUri(uri): FullUri,
+    current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
     let start = Instant::now();
     let projects = state.db.get_projects().await?;
@@ -183,6 +186,7 @@ pub async fn get_projects(
         current_sort,
         canonical_url: canonical_url.as_str(),
         image_url: image_url.as_str(),
+        current_user: current_user.map(|u| u.profile),
     })?;
     let elapsed = start.elapsed();
     rendered = rendered.replace("[[time]]", &format!("{}ms", elapsed.as_millis()));

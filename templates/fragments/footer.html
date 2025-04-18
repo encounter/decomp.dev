@@ -1,4 +1,14 @@
 <footer>
-    <small class="muted">Generated in [[time]]</small> |
-    <small class="muted"><a href="https://github.com/encounter/decompal">Code</a> by <a href="https://github.com/encounter">@encounter</a></small>
+    <span class="section">
+        <small class="muted">Generated in [[time]]</small> |
+        <small class="muted"><a href="https://github.com/encounter/decompal">Code</a> by <a href="https://github.com/encounter">@encounter</a></small>
+    </span>
+    {% if current_user %}
+    <span class="section">
+        <small class="muted">Logged in as <a href="{{ current_user.html_url }}">@{{ current_user.login }}</a></small> |
+        <form action="/logout" method="post" style="display: inline">
+            <input type="submit" class="button outline secondary" value="Logout">
+        </form>
+    </span>
+    {% endif %}
 </footer>

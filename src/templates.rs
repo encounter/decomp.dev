@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use minijinja::{path_loader, Environment};
 use minijinja_autoreload::AutoReloader;
+use time::{format_description, macros::format_description, UtcDateTime};
 
 pub type Templates = Arc<AutoReloader>;
 
@@ -31,20 +31,28 @@ where S: serde::Serialize {
 }
 
 fn timeago(value: String) -> String {
-    let Ok(value) = DateTime::parse_from_rfc3339(&value) else {
-        return "[invalid]".to_string();
+    let Ok(value) = serde_json::from_str::<UtcDateTime>(&value) else {
+        return format!("[invalid {}]", value);
     };
-    let Ok(duration) = Utc::now().signed_duration_since(value).to_std() else {
+    let Ok(duration) = Duration::try_from(UtcDateTime::now() - value) else {
         return "[out of range]".to_string();
     };
     timeago::Formatter::new().convert(duration)
 }
 
 fn date(value: String, format: Option<String>) -> String {
-    let Ok(value) = DateTime::parse_from_rfc3339(&value) else {
-        return "[invalid]".to_string();
+    let Ok(value) = serde_json::from_str::<UtcDateTime>(&value) else {
+        return format!("[invalid {}]", value);
     };
-    value.format(format.as_deref().unwrap_or("%Y-%m-%d %H:%M:%S %Z")).to_string()
+    let format = if let Some(format) = format.as_deref() {
+        match format_description::parse_borrowed::<2>(format) {
+            Ok(format) => Cow::Owned(format),
+            Err(_) => return format!("[invalid format {}]", format),
+        }
+    } else {
+        Cow::Borrowed(format_description!("[year]-[month]-[day] [hour]:[minute]:[second] [offset_hour sign:mandatory]:[offset_minute]"))
+    };
+    value.format(&format).unwrap_or_else(|_| "[invalid]".to_string())
 }
 
 /// Format a size in bytes to a human-readable string.

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                UPDATE reports\n                SET git_commit_message = ?\n                WHERE project_id = ? AND git_commit = ? COLLATE NOCASE\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "a4130f021284bfab1562647ecf4b2967a8d70a1e1f02f92c4f792d71ace021e5"
+}

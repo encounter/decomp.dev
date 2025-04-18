@@ -30,6 +30,8 @@ use tower_http::{
     trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
     ServiceBuilderExt,
 };
+use tower_sessions::{Expiry, SessionManagerLayer, SessionStore};
+use tower_sessions_sqlx_store::SqliteStore;
 use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 use crate::{
@@ -59,24 +61,30 @@ async fn main() {
         let file = BufReader::new(File::open("config.yml").expect("Failed to open config file"));
         serde_yaml::from_reader(file).expect("Failed to parse config file")
     };
-    let db = Database::new(&config.app).await.expect("Failed to open database");
-    let github = GitHub::new(&config.app).await.expect("Failed to create GitHub client");
+    let db = Database::new(&config.db).await.expect("Failed to open database");
+    let github = GitHub::new(&config.github).await.expect("Failed to create GitHub client");
     let templates = templates::create("templates");
-    let mut state = AppState { config, db: db.clone(), github, templates };
+    let state = AppState { config, db: db.clone(), github, templates };
+
+    // Create session store
+    let session_store = SqliteStore::new(db.pool.clone());
+    session_store.migrate().await.expect("Failed to migrate session store");
 
     // Refresh before starting the server
     // cron::refresh_projects(&mut state).await.expect("Failed to refresh projects");
     // frogress::migrate_data(&mut state).await.expect("Failed to migrate data");
 
     // Start the task scheduler
-    let mut scheduler = cron::create(state.clone()).await.expect("Failed to create scheduler");
+    let mut scheduler = cron::create(state.clone(), session_store.clone())
+        .await
+        .expect("Failed to create scheduler");
 
     // Run our service
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, state.config.server.port));
     tracing::info!("Listening on {}", addr);
     axum::serve(
         TcpListener::bind(addr).await.expect("bind error"),
-        app(state).into_make_service_with_connect_info::<SocketAddr>(),
+        app(state, session_store).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await
@@ -87,7 +95,7 @@ async fn main() {
     tracing::info!("Shut down gracefully");
 }
 
-fn app(state: AppState) -> Router {
+fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
     let sensitive_headers: Arc<[_]> = vec![header::AUTHORIZATION, header::COOKIE].into();
     let middleware = ServiceBuilder::new()
         .sensitive_request_headers(sensitive_headers.clone())
@@ -99,6 +107,11 @@ fn app(state: AppState) -> Router {
         )
         .layer(TimeoutLayer::new(Duration::from_secs(10)))
         .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
+        .layer(
+            SessionManagerLayer::new(session_store)
+                .with_secure(false)
+                .with_expiry(Expiry::OnInactivity(time::Duration::days(1))),
+        )
         .compression();
     build_router().layer(middleware).with_state(state)
 }

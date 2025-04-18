@@ -294,6 +294,22 @@ $unit-size: 0.75rem;
   margin-top: calc(var(--pico-block-spacing-vertical) * 2);
 }
 
+footer {
+  display: flex;
+  justify-content: space-between;
+
+  // Log out button
+  input[type="submit"] {
+    padding: .3em;
+    margin: 0;
+    background: none;
+    border: none;
+    width: auto;
+    font-size: .875em;
+    height: auto;
+  }
+}
+
 #tooltip {
   --arrow-size: 0.3rem;
   position: absolute;

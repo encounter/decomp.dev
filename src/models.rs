@@ -1,8 +1,8 @@
 use std::{borrow::Cow, sync::Arc};
 
-use chrono::{DateTime, Utc};
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
 use serde::Serialize;
+use time::UtcDateTime;
 
 use crate::db::UnitKey;
 
@@ -16,6 +16,7 @@ pub struct Project {
     pub default_category: Option<String>,
     pub default_version: Option<String>,
     pub platform: Option<String>,
+    pub workflow_id: Option<String>,
 }
 
 impl Project {
@@ -59,14 +60,17 @@ impl ProjectInfo {
 pub struct Commit {
     pub sha: String,
     pub message: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: UtcDateTime,
 }
 
 impl From<&octocrab::models::workflows::HeadCommit> for Commit {
     fn from(commit: &octocrab::models::workflows::HeadCommit) -> Self {
         Self {
             sha: commit.id.clone(),
-            timestamp: commit.timestamp,
+            timestamp: UtcDateTime::from_unix_timestamp(
+                commit.timestamp.to_utc().timestamp_millis(),
+            )
+            .unwrap_or_else(|_| UtcDateTime::now()),
             message: (!commit.message.is_empty()).then(|| commit.message.clone()),
         }
     }
