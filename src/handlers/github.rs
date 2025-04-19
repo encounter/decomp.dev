@@ -165,7 +165,7 @@ async fn handle_workflow_run_completed(
     _workflow: WorkFlow,
     workflow_run: RunWithPullRequests,
 ) -> Result<()> {
-    let RunWithPullRequests { inner: workflow_run, pull_requests } = workflow_run;
+    let RunWithPullRequests { inner: workflow_run, mut pull_requests } = workflow_run;
     let repository_id = workflow_run.repository.id.into_inner();
     let Some(project_info) = state.db.get_project_info_by_id(repository_id, None).await? else {
         tracing::warn!("No project found for repository ID {}", repository_id);
@@ -209,7 +209,30 @@ async fn handle_workflow_run_completed(
         }
     } else if workflow_run.event == "pull_request" {
         // Fetch any associated pull requests
+        if pull_requests.is_empty() {
+            let head = if let Some(head_owner) =
+                workflow_run.head_repository.as_ref().and_then(|r| r.owner.as_ref())
+            {
+                format!("{}:{}", head_owner.login, workflow_run.head_branch)
+            } else {
+                workflow_run.head_branch.clone()
+            };
+            pull_requests = client
+                .all_pages(
+                    client
+                        .pulls(&project_info.project.owner, &project_info.project.repo)
+                        .list()
+                        .head(&head)
+                        .send()
+                        .await?,
+                )
+                .await?;
+            tracing::info!("Found {} pull requests for {}", pull_requests.len(), head);
+        }
         for pull_request in pull_requests {
+            if pull_request.head.sha != workflow_run.head_sha {
+                continue;
+            }
             tracing::info!("Processing pull request {}", pull_request.id);
             let issues = client.issues_by_id(repository_id);
             // Only fetch first page for now

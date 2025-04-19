@@ -111,8 +111,8 @@ impl Database {
         let timestamp = commit.timestamp.to_offset(UtcOffset::UTC);
         let report_id = sqlx::query!(
             r#"
-            INSERT INTO reports (project_id, version, git_commit, timestamp, data, data_version)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO reports (project_id, version, git_commit, git_commit_message, timestamp, data, data_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (project_id, version COLLATE NOCASE, git_commit COLLATE NOCASE) DO UPDATE
             SET timestamp = EXCLUDED.timestamp
             RETURNING id
@@ -120,6 +120,7 @@ impl Database {
             project_id,
             version,
             commit.sha,
+            commit.message,
             timestamp,
             data,
             report.version,

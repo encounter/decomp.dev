@@ -28,7 +28,7 @@ oxc = { version = "0.31", features = ["codegen", "minifier", "transformer", "sem
 palette = "0.7"
 prost = "0.13"
 regex = "1.11"
-reqwest = { version = "0.12", features = ["json", "gzip", "zstd"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "zstd", "charset", "http2", "rustls-tls-native-roots"] }
 resvg = "0.45"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
