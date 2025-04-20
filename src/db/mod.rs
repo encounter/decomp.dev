@@ -9,7 +9,8 @@ use prost::Message;
 use sqlx::{
     migrate::MigrateDatabase, Connection, Executor, Pool, Row, Sqlite, SqliteConnection, SqlitePool,
 };
-use time::{OffsetDateTime, UtcOffset};
+use time::{macros::format_description, OffsetDateTime, UtcDateTime};
+
 use crate::{
     config::DbConfig,
     models::{
@@ -108,7 +109,7 @@ impl Database {
         report.migrate()?;
         let units = mem::take(&mut report.units);
         let data = compress(&report.encode_to_vec());
-        let timestamp = commit.timestamp.to_offset(UtcOffset::UTC);
+        let timestamp = to_primitive_date_time(commit.timestamp);
         let report_id = sqlx::query!(
             r#"
             INSERT INTO reports (project_id, version, git_commit, git_commit_message, timestamp, data, data_version)
@@ -266,21 +267,21 @@ impl Database {
     pub async fn upgrade_report(&self, file: &CachedReportFile) -> Result<FullReportFile> {
         let mut units = Vec::with_capacity(file.report.units.len());
         let mut missing_unit_keys = Vec::with_capacity(file.report.units.len());
-        let mut missing_unit_idx = HashMap::new();
+        let mut missing_unit_idx = HashMap::<UnitKey, Vec<usize>>::new();
         for (idx, &key) in file.report.units.iter().enumerate() {
             if let Some(unit) = self.report_unit_cache.get(&key).await {
                 units.push(Some(unit));
             } else {
                 units.push(None);
                 missing_unit_keys.push(key);
-                missing_unit_idx.insert(key, idx);
+                missing_unit_idx.entry(key).or_default().push(idx);
             }
         }
         if !missing_unit_keys.is_empty() {
             let mut conn = self.pool.acquire().await?;
             for chunk in missing_unit_keys.chunks(BIND_LIMIT) {
                 let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
-                    "SELECT ru.id AS id, ru.data FROM report_units ru WHERE ru.id IN (",
+                    "SELECT ru.id, ru.data FROM report_units ru WHERE ru.id IN (",
                 );
                 let mut separated = builder.separated(", ");
                 for key in chunk {
@@ -292,7 +293,6 @@ impl Database {
                     let row_id: Box<[u8]> = row.get(0);
                     let row_data: Box<[u8]> = row.get(1);
                     let key = row_id.as_ref().try_into()?;
-                    let unit_idx = missing_unit_idx.get(&key).copied().unwrap();
                     let data =
                         decompress(&row_data).context("Failed to decompress report unit data")?;
                     // Skip hash check since we're rehydrating a cached report
@@ -302,8 +302,22 @@ impl Database {
                             .context("Failed to decode report unit")?,
                     );
                     self.report_unit_cache.insert(key, unit.clone()).await;
-                    units[unit_idx] = Some(unit);
+                    if let Some(v) = missing_unit_idx.get(&key) {
+                        for &idx in v {
+                            units[idx] = Some(unit.clone());
+                        }
+                    } else {
+                        tracing::error!("Unexpected unit index: {:?}", hex::encode(key));
+                    }
                 }
+            }
+        }
+        let mut out_units = Vec::with_capacity(file.report.units.len());
+        for (unit, &unit_key) in units.into_iter().zip(&file.report.units) {
+            if let Some(unit) = unit {
+                out_units.push(unit);
+            } else {
+                tracing::error!("Failed to load report unit: {}", hex::encode(unit_key));
             }
         }
         Ok(FullReportFile {
@@ -312,7 +326,7 @@ impl Database {
             report: FullReport {
                 version: file.report.version,
                 measures: file.report.measures,
-                units: units.into_iter().map(Option::unwrap).collect(),
+                units: out_units,
                 categories: file.report.categories.clone(),
             },
         })
@@ -479,7 +493,7 @@ impl Database {
         };
         if let Some(first_report) = reports.first() {
             // Fetch previous and next commits
-            let timestamp = first_report.timestamp;
+            let timestamp = to_primitive_date_time(first_report.timestamp.to_utc());
             let prev_commit = sqlx::query!(
                 r#"
                 SELECT git_commit
@@ -948,4 +962,9 @@ fn decompress(data: &[u8]) -> Result<Cow<[u8]>> {
         Ok(None) => Err(anyhow!("Decompressed data size is unknown")),
         Err(_) => Ok(Cow::Borrowed(data)), // Assume uncompressed
     }
+}
+
+#[inline]
+fn to_primitive_date_time(date: UtcDateTime) -> String {
+    date.format(format_description!("[year]-[month]-[day] [hour]:[minute]:[second]")).unwrap()
 }
