@@ -362,7 +362,7 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let project = match sqlx::query!(
             r#"
-            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id
+            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments
             FROM projects
             WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE
             "#,
@@ -382,6 +382,7 @@ impl Database {
                 default_version: row.default_version,
                 platform: row.platform,
                 workflow_id: row.workflow_id,
+                enable_pr_comments: row.enable_pr_comments,
             },
             None => return Ok(None),
         };
@@ -397,7 +398,7 @@ impl Database {
         let project_id_db = project_id as i64;
         let project = match sqlx::query!(
             r#"
-            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id
+            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments
             FROM projects
             WHERE id = ?
             "#,
@@ -416,6 +417,7 @@ impl Database {
                 default_version: row.default_version,
                 platform: row.platform,
                 workflow_id: row.workflow_id,
+                enable_pr_comments: row.enable_pr_comments,
             },
             None => return Ok(None),
         };
@@ -548,6 +550,7 @@ impl Database {
                 default_version,
                 platform,
                 workflow_id,
+                enable_pr_comments AS "enable_pr_comments!",
                 git_commit,
                 git_commit_message,
                 MAX(timestamp) AS "timestamp: time::OffsetDateTime",
@@ -579,6 +582,7 @@ impl Database {
                 default_version: row.default_version,
                 platform: row.platform,
                 workflow_id: row.workflow_id,
+                enable_pr_comments: row.enable_pr_comments,
             },
             commit: match (row.git_commit, row.timestamp) {
                 (Some(sha), Some(timestamp)) => Some(Commit {

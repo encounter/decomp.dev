@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN enable_pr_comments BOOLEAN NOT NULL DEFAULT TRUE;

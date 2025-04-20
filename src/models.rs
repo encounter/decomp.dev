@@ -17,6 +17,7 @@ pub struct Project {
     pub default_version: Option<String>,
     pub platform: Option<String>,
     pub workflow_id: Option<String>,
+    pub enable_pr_comments: bool,
 }
 
 impl Project {

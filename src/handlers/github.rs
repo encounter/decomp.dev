@@ -208,6 +208,9 @@ async fn handle_workflow_run_completed(
             );
         }
     } else if workflow_run.event == "pull_request" {
+        if !project_info.project.enable_pr_comments {
+            return Ok(());
+        }
         // Fetch any associated pull requests
         if pull_requests.is_empty() {
             let head = if let Some(head_owner) =
