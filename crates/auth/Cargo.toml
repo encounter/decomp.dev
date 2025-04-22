@@ -1,0 +1,18 @@
+[package]
+name = "decomp-dev-auth"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64 = "0.22"
+rand = "0.9"
+decomp-dev-core = { path = "../core" }
+octocrab.workspace = true
+time.workspace = true
+serde.workspace = true
+tower-sessions.workspace = true
+tracing.workspace = true
+url.workspace = true

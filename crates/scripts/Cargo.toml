@@ -1,0 +1,17 @@
+[package]
+name = "decomp-dev-scripts"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+ariadne = { version = "0.4", features = ["auto-color"] }
+lightningcss = "1.0.0-alpha.65"
+oxc = { version = "0.31", features = ["codegen", "minifier", "transformer", "semantic"] }
+tokio.workspace = true
+thiserror = "2.0"
+grass = "0.13"
+decomp-dev-core = { path = "../core" }
+axum.workspace = true
+mime.workspace = true

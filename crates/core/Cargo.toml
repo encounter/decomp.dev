@@ -1,0 +1,15 @@
+[package]
+name = "decomp-dev-core"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+objdiff-core.workspace = true
+serde.workspace = true
+time.workspace = true
+url.workspace = true
+axum.workspace = true
+mime.workspace = true
+tracing.workspace = true

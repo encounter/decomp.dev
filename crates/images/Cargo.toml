@@ -1,0 +1,20 @@
+[package]
+name = "decomp-dev-images"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+resvg = "0.45"
+tracing.workspace = true
+objdiff-core.workspace = true
+image.workspace = true
+serde.workspace = true
+badge-maker = "0.3"
+axum.workspace = true
+decomp-dev-core = { path = "../core" }
+tokio.workspace = true
+mime.workspace = true
+streemap = "0.1"
+palette = "0.7"
