@@ -938,6 +938,29 @@ impl Database {
         .await?;
         Ok(())
     }
+
+    pub async fn update_project_settings(
+        &self,
+        project_id: u64,
+        enable_pr_comments: bool,
+        default_version: Option<String>,
+    ) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        sqlx::query!(
+            r#"
+            UPDATE projects
+            SET enable_pr_comments = ?, default_version = ?
+            WHERE id = ?
+            "#,
+            enable_pr_comments,
+            default_version,
+            project_id_db,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
 }
 
 thread_local! {

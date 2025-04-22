@@ -27,6 +27,7 @@ pub fn build_router() -> Router<AppState> {
         .route("/og.png", get(decomp_dev_images::get_og))
         .route("/", get(project::get_projects))
         .route("/{owner}/{repo}", get(report::get_report))
+        .route("/{owner}/{repo}", post(report::save_project))
         .route("/{owner}/{repo}/{version}", get(report::get_report))
         .route("/{owner}/{repo}/{version}/{commit}", get(report::get_report))
 }

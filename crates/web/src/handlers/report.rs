@@ -2,10 +2,10 @@ use std::{borrow::Cow, iter, time::Instant};
 
 use anyhow::{Context, Result};
 use axum::{
-    Json,
+    Form, Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, Uri, header},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
@@ -783,9 +783,87 @@ async fn render_template(
                     noscript {
                         img #treemap src=(image_url) alt="Progress graph";
                     }
+                    @if current_user.as_ref().is_some_and(|u| u.permissions_for_repo(project_info.project.id).admin) {
+                        (manage_form(project_info))
+                    }
                 }
             }
             (footer(start, current_user.as_ref()))
         }
     })
+}
+
+fn manage_form(project_info: &ProjectInfo) -> Markup {
+    let project_base_path =
+        format!("/{}/{}", project_info.project.owner, project_info.project.repo);
+    let default_version = project_info.default_version();
+    html! {
+        h6 class="report-header" { "Manage" }
+        form action=(project_base_path) method="post" {
+            fieldset {
+                label {
+                    "Default version"
+                    select name="default_version" {
+                        @for version in &project_info.report_versions {
+                            @if default_version == Some(version.as_str()) {
+                                option value=(version) selected { (version) }
+                            } @else {
+                                option value=(version) { (version) }
+                            }
+                        }
+                    }
+                }
+                label {
+                    @if project_info.project.enable_pr_comments {
+                        input name="enable_pr_comments" type="checkbox" role="switch" checked;
+                    } @else {
+                        input name="enable_pr_comments" type="checkbox" role="switch";
+                    }
+                    "Enable PR comments"
+                }
+            }
+            button type="submit" { "Save" }
+        }
+    }
+}
+
+fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where D: serde::Deserializer<'de> {
+    match <&str>::deserialize(deserializer)? {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        other => Err(serde::de::Error::unknown_variant(other, &["on", "off"])),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ProjectForm {
+    #[serde(default, deserialize_with = "form_bool")]
+    pub enable_pr_comments: bool,
+    pub default_version: Option<String>,
+}
+
+pub async fn save_project(
+    Path(params): Path<ReportParams>,
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+    Form(form): Form<ProjectForm>,
+) -> Result<Response, AppError> {
+    let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
+    else {
+        return Err(AppError::Status(StatusCode::NOT_FOUND));
+    };
+    if !current_user.permissions_for_repo(project_info.project.id).admin {
+        return Err(AppError::Status(StatusCode::FORBIDDEN));
+    }
+    state
+        .db
+        .update_project_settings(
+            project_info.project.id,
+            form.enable_pr_comments,
+            form.default_version,
+        )
+        .await?;
+    let redirect_url = format!("/{}/{}", params.owner, params.repo);
+    Ok(Redirect::to(&redirect_url).into_response())
 }

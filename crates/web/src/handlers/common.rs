@@ -57,8 +57,15 @@ pub fn footer(start: Instant, current_user: Option<&CurrentUser>) -> Markup {
                         "Logged in as "
                         a href=(user.profile.html_url) { "@" (user.profile.login) }
                     }
+                    " | "
                     form action="/logout" method="post" style="display: inline" {
                         input type="submit" class="button outline secondary" value="Logout";
+                    }
+                }
+            } @else {
+                span class="section" {
+                    small class="muted" {
+                        a href="/login" { "Login" }
                     }
                 }
             }

@@ -6,7 +6,10 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use decomp_dev_core::{AppError, config::GitHubConfig};
-use octocrab::{Octocrab, models::Author};
+use octocrab::{
+    Octocrab,
+    models::{Author, Permissions, Repository, RepositoryId},
+};
 use rand::{TryRngCore, rngs::OsRng};
 use time::{Duration, UtcDateTime};
 use tower_sessions::Session;
@@ -42,6 +45,41 @@ pub type Profile = Author;
 pub struct CurrentUser {
     pub oauth: StoredOAuth,
     pub profile: Profile,
+    #[serde(default)]
+    pub repos: Vec<CurrentUserRepo>,
+}
+
+impl CurrentUser {
+    pub fn permissions_for_repo(&self, id: u64) -> Permissions {
+        self.repos
+            .iter()
+            .find(|r| r.id.into_inner() == id)
+            .map(|r| r.permissions.clone())
+            .unwrap_or_else(default_permissions)
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct CurrentUserRepo {
+    pub id: RepositoryId,
+    pub owner: String,
+    pub repo: String,
+    pub permissions: Permissions,
+}
+
+fn default_permissions() -> Permissions {
+    serde_json::from_str::<Permissions>(r#"{"push":false,"pull":false}"#).unwrap()
+}
+
+impl From<Repository> for CurrentUserRepo {
+    fn from(repo: Repository) -> Self {
+        Self {
+            id: repo.id,
+            owner: repo.owner.map(|o| o.login).unwrap_or_default(),
+            repo: repo.name,
+            permissions: repo.permissions.unwrap_or_else(default_permissions),
+        }
+    }
 }
 
 pub async fn login(
@@ -182,13 +220,29 @@ async fn fetch_access_token(config: &GitHubConfig, code: &str) -> Result<Current
     let oauth = StoredOAuth::from(oauth);
     let client = Octocrab::builder().oauth(oauth.clone().into()).build()?;
     let profile = client.current().user().await.context("Failed to fetch current user")?;
-    tracing::info!("Logged in as @{}", profile.login);
-    Ok(CurrentUser { oauth, profile })
+    let repos = client
+        .all_pages(
+            client
+                .current()
+                .list_repos_for_authenticated_user()
+                .per_page(100)
+                .send()
+                .await
+                .context("Failed to fetch current user repositories")?,
+        )
+        .await
+        .context("Failed to fetch current user repositories")?
+        .into_iter()
+        .map(CurrentUserRepo::from)
+        .collect::<Vec<_>>();
+    tracing::info!("Logged in as @{} ({} repos)", profile.login, repos.len());
+    Ok(CurrentUser { oauth, profile, repos })
 }
 
 async fn refresh_access_token(
     config: &GitHubConfig,
     refresh_token: &str,
+    prev_auth: &CurrentUser,
 ) -> Result<CurrentUser, anyhow::Error> {
     let Some(oauth_config) = &config.oauth else {
         tracing::warn!("No GitHub OAuth config found");
@@ -210,7 +264,7 @@ async fn refresh_access_token(
     let client = Octocrab::builder().oauth(oauth.clone().into()).build()?;
     let profile = client.current().user().await.context("Failed to fetch current user")?;
     tracing::info!("Refreshed token for @{}", profile.login);
-    Ok(CurrentUser { oauth, profile })
+    Ok(CurrentUser { oauth, profile, repos: prev_auth.repos.clone() })
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -256,13 +310,14 @@ where
                             return Ok(None);
                         }
                     }
-                    let current_user = match refresh_access_token(&config, refresh_token).await {
-                        Ok(current_user) => current_user,
-                        Err(e) => {
-                            tracing::error!("Failed to refresh access token: {:?}", e);
-                            return Ok(None);
-                        }
-                    };
+                    let current_user =
+                        match refresh_access_token(&config, refresh_token, &user).await {
+                            Ok(current_user) => current_user,
+                            Err(e) => {
+                                tracing::error!("Failed to refresh access token: {:?}", e);
+                                return Ok(None);
+                            }
+                        };
                     if let Err(e) = session.insert(CURRENT_USER, current_user.clone()).await {
                         tracing::error!("Failed to insert user into session: {}", e);
                     }
