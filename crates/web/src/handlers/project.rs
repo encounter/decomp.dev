@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{str::FromStr, sync::Arc, time::Instant};
 
 use anyhow::{Context, anyhow};
 use axum::{
@@ -9,7 +9,7 @@ use axum::{
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
-    models::{Commit, Project},
+    models::{Commit, Platform, Project},
     util::UrlExt,
 };
 use maud::{DOCTYPE, Markup, html};
@@ -247,8 +247,9 @@ fn project_fragment(
                     a href=(project_path) { (info.project.name()) }
                 }
                 @if let Some(platform) = &info.project.platform {
+                    @let platform_name = Platform::from_str(platform).map(|p| p.name()).unwrap_or(platform);
                     img class="platform-icon" src=(format!("/assets/platforms/{}.svg", platform))
-                        alt=(platform) width="24" height="24";
+                        alt=(platform_name) title=(platform_name) width="24" height="24";
                 }
             }
             h6 {

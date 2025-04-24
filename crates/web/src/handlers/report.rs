@@ -2,10 +2,10 @@ use std::{borrow::Cow, iter, time::Instant};
 
 use anyhow::{Context, Result};
 use axum::{
-    Form, Json,
+    Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, Uri, header},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
 };
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
@@ -232,7 +232,9 @@ pub async fn get_report(
         "shield" => mode_shield(&scope, query, &acceptable),
         "report" => mode_report(&scope, &state, uri, query, start, &acceptable, current_user).await,
         "measures" => mode_measures(&scope, &acceptable),
-        "history" => mode_history(&scope, &state, query, &acceptable).await,
+        "history" => {
+            mode_history(&scope, &state, uri, query, start, &acceptable, current_user).await
+        }
         _ => Err(AppError::Status(StatusCode::BAD_REQUEST)),
     }
 }
@@ -251,7 +253,7 @@ async fn mode_report(
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
-            let rendered = render_template(scope, state, uri, current_user, start).await?;
+            let rendered = render_report(scope, state, uri, current_user, start).await?;
             return Ok(rendered.into_response());
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
             let flattened = scope.report.report.flatten();
@@ -336,8 +338,11 @@ struct ReportHistoryEntry {
 async fn mode_history(
     scope: &Scope<'_>,
     state: &AppState,
+    uri: Uri,
     query: ReportQuery,
+    start: Instant,
     acceptable: &[Mime],
+    current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
     let report_measures =
         state.db.fetch_all_reports(&scope.project_info.project, &scope.report.version).await?;
@@ -378,8 +383,11 @@ async fn mode_history(
     }
     for mime in acceptable {
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
-            || (mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON)
+            || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
+            let rendered = render_history(scope, state, uri, current_user, start, result).await?;
+            return Ok(rendered.into_response());
+        } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
             return Ok(Json(result).into_response());
         }
     }
@@ -512,11 +520,18 @@ fn apply_scope<'a>(
     let label = current_unit
         .as_ref()
         .map(|u| u.name.rsplit_once('/').map_or(u.name.as_str(), |(_, name)| name))
-        .or_else(|| current_category.as_ref().map(|c| c.name.as_str()));
+        .or_else(|| {
+            // Only show a category label if it is not the default category
+            let default_category_id =
+                project_info.project.default_category.as_deref().unwrap_or("all");
+            let current_category_id = current_category.map(|c| c.id.as_str()).unwrap_or("all");
+            (current_category_id != default_category_id)
+                .then(|| current_category.map(|c| c.name.as_str()).unwrap_or("All"))
+        });
     Ok(Scope { report, project_info, measures, current_category, current_unit, units, label })
 }
 
-async fn render_template(
+async fn render_report(
     scope: &Scope<'_>,
     state: &AppState,
     uri: Uri,
@@ -557,6 +572,12 @@ async fn render_template(
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
     let project_base_path =
         format!("/{}/{}", project_info.project.owner, project_info.project.repo);
+    let project_history_path = request_url.query_param("mode", Some("history"));
+    let project_manage_path =
+        format!("/manage/{}/{}", project_info.project.owner, project_info.project.repo);
+    let can_manage = current_user
+        .as_ref()
+        .is_some_and(|u| u.permissions_for_repo(project_info.project.id).admin);
     let canonical_url = request_url.with_path(&format!(
         "/{}/{}/{}/{}",
         project_info.project.owner, project_info.project.repo, report.version, report.commit.sha
@@ -575,7 +596,14 @@ async fn render_template(
         })
         .collect::<Vec<_>>();
 
-    let all_url = canonical_url.query_param("category", None);
+    let all_url = canonical_url.query_param(
+        "category",
+        if project_info.project.default_category.as_deref().is_none_or(|c| c == "all") {
+            None
+        } else {
+            Some("all")
+        },
+    );
     let all_category =
         ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
     let current_category = current_category
@@ -679,6 +707,17 @@ async fn render_template(
                     }
                 }
                 main {
+                    .actions {
+                        details class="dropdown" {
+                            summary {}
+                            ul dir="rtl" {
+                                li { a href=(project_history_path) { "History" } }
+                                @if can_manage {
+                                    li { a href=(project_manage_path) { "Manage" } }
+                                }
+                            }
+                        }
+                    }
                     h3 { (format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent)) }
                     @if current_unit.is_none() && measures.complete_code_percent > 0.0 {
                         h4 class="muted" { (format!("{:.2}% fully linked", measures.complete_code_percent)) }
@@ -783,9 +822,6 @@ async fn render_template(
                     noscript {
                         img #treemap src=(image_url) alt="Progress graph";
                     }
-                    @if current_user.as_ref().is_some_and(|u| u.permissions_for_repo(project_info.project.id).admin) {
-                        (manage_form(project_info))
-                    }
                 }
             }
             (footer(start, current_user.as_ref()))
@@ -793,77 +829,146 @@ async fn render_template(
     })
 }
 
-fn manage_form(project_info: &ProjectInfo) -> Markup {
+async fn render_history(
+    scope: &Scope<'_>,
+    state: &AppState,
+    uri: Uri,
+    current_user: Option<CurrentUser>,
+    start: Instant,
+    result: Vec<ReportHistoryEntry>,
+) -> Result<Markup> {
+    let Scope { report, project_info, measures, current_category, current_unit, units, label } =
+        scope;
+
+    let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
     let project_base_path =
         format!("/{}/{}", project_info.project.owner, project_info.project.repo);
-    let default_version = project_info.default_version();
-    html! {
-        h6 class="report-header" { "Manage" }
-        form action=(project_base_path) method="post" {
-            fieldset {
-                label {
-                    "Default version"
-                    select name="default_version" {
-                        @for version in &project_info.report_versions {
-                            @if default_version == Some(version.as_str()) {
-                                option value=(version) selected { (version) }
-                            } @else {
-                                option value=(version) { (version) }
+    let canonical_url = request_url.with_path(&format!(
+        "/{}/{}/{}",
+        project_info.project.owner, project_info.project.repo, report.version
+    ));
+    let image_url = canonical_url.with_path(&format!("{}.png", canonical_url.path()));
+
+    let versions = project_info
+        .report_versions
+        .iter()
+        .map(|version| {
+            let version_url = request_url.with_path(&format!(
+                "/{}/{}/{}/{}",
+                project_info.project.owner, project_info.project.repo, version, report.commit.sha
+            ));
+            ReportTemplateVersion { id: version, path: version_url.path_and_query().to_string() }
+        })
+        .collect::<Vec<_>>();
+
+    let all_url = canonical_url.query_param(
+        "category",
+        if project_info.project.default_category.as_deref().is_none_or(|c| c == "all") {
+            None
+        } else {
+            Some("all")
+        },
+    );
+    let all_category =
+        ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
+    let current_category = current_category
+        .map(|c| {
+            let path =
+                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
+            ReportCategoryItem { id: &c.id, name: &c.name, path }
+        })
+        .unwrap_or_else(|| all_category.clone());
+    let categories = iter::once(all_category)
+        .chain(report.report.categories.iter().map(|c| {
+            let path =
+                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
+            ReportCategoryItem { id: &c.id, name: &c.name, path }
+        }))
+        .collect::<Vec<_>>();
+
+    let project_name = if let Some(label) = label {
+        Cow::Owned(format!("{} ({})", project_info.project.name(), label))
+    } else {
+        project_info.project.name()
+    };
+    let project_short_name = if let Some(label) = label {
+        Cow::Owned(format!("{} ({})", project_info.project.short_name(), label))
+    } else {
+        Cow::Borrowed(project_info.project.short_name())
+    };
+
+    Ok(html! {
+        (DOCTYPE)
+        html {
+            head lang="en" {
+                meta charset="utf-8";
+                title { (project_short_name) " • Progress History" }
+                (header())
+                meta name="description" content=(format!("Decompilation progress history for {project_name}"));
+                meta property="og:title" content=(format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent));
+                meta property="og:description" content=(format!("Decompilation progress history for {project_name}"));
+                meta property="og:image" content=(image_url);
+                meta property="og:url" content=(canonical_url);
+                link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css";
+            }
+            body {
+                header {
+                    nav {
+                        ul {
+                            li {
+                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                            }
+                            li {
+                                a href="/" { "Projects" }
+                            }
+                            li {
+                                a href=(project_base_path) { (project_short_name) }
+                            }
+                            li {
+                                a href=(request_url) { "History" }
+                            }
+                        }
+                        (nav_links())
+                    }
+                }
+                main {
+                    h3 { "History for " (project_short_name) }
+                    details class="dropdown" title="Version" {
+                        summary { (report.version) }
+                        ul {
+                            @for version in &versions {
+                                li {
+                                    a href=(version.path) { (version.id) }
+                                }
                             }
                         }
                     }
-                }
-                label {
-                    @if project_info.project.enable_pr_comments {
-                        input name="enable_pr_comments" type="checkbox" role="switch" checked;
-                    } @else {
-                        input name="enable_pr_comments" type="checkbox" role="switch";
+                    @if current_unit.is_none() && categories.len() > 1 {
+                        details class="dropdown" title="Category" {
+                            summary { (current_category.name) }
+                            ul {
+                                @for category in &categories {
+                                    li {
+                                        a href=(category.path) { (category.name) }
+                                    }
+                                }
+                            }
+                        }
                     }
-                    "Enable PR comments"
+                    script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js" {}
+                    script src="/js/history.min.js" {}
+                    script {
+                        (PreEscaped(r#"document.write('<div id="chart" width="100%"></div>');renderChart("chart","#))
+                        (PreEscaped(serde_json::to_string(&result)?))
+                        (PreEscaped(r#");"#))
+                    }
+                    hr;
+                    div role="group" {
+                        a role="button" href=(project_base_path) { "Back to report" }
+                    }
                 }
             }
-            button type="submit" { "Save" }
+            (footer(start, current_user.as_ref()))
         }
-    }
-}
-
-fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where D: serde::Deserializer<'de> {
-    match <&str>::deserialize(deserializer)? {
-        "on" => Ok(true),
-        "off" => Ok(false),
-        other => Err(serde::de::Error::unknown_variant(other, &["on", "off"])),
-    }
-}
-
-#[derive(Deserialize)]
-pub struct ProjectForm {
-    #[serde(default, deserialize_with = "form_bool")]
-    pub enable_pr_comments: bool,
-    pub default_version: Option<String>,
-}
-
-pub async fn save_project(
-    Path(params): Path<ReportParams>,
-    State(state): State<AppState>,
-    current_user: CurrentUser,
-    Form(form): Form<ProjectForm>,
-) -> Result<Response, AppError> {
-    let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
-    else {
-        return Err(AppError::Status(StatusCode::NOT_FOUND));
-    };
-    if !current_user.permissions_for_repo(project_info.project.id).admin {
-        return Err(AppError::Status(StatusCode::FORBIDDEN));
-    }
-    state
-        .db
-        .update_project_settings(
-            project_info.project.id,
-            form.enable_pr_comments,
-            form.default_version,
-        )
-        .await?;
-    let redirect_url = format!("/{}/{}", params.owner, params.repo);
-    Ok(Redirect::to(&redirect_url).into_response())
+    })
 }

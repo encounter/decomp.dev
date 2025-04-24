@@ -2,14 +2,14 @@ pub mod changes;
 pub mod webhook;
 
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::{HashMap, HashSet, hash_map::Entry},
     ffi::OsStr,
     io::{Cursor, Read},
     pin::pin,
     sync::{Arc, OnceLock},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use decomp_dev_core::{
     config::GitHubConfig,
     models::{Commit, Project},
@@ -20,7 +20,10 @@ use http::StatusCode;
 use objdiff_core::bindings::report::Report;
 use octocrab::{
     GitHubError, Octocrab,
-    models::{ArtifactId, InstallationId, RunId, repos::RepoCommitPage, workflows::HeadCommit},
+    models::{
+        ArtifactId, InstallationId, InstallationRepositories, Repository, RunId,
+        repos::RepoCommitPage, workflows::HeadCommit,
+    },
     params::actions::ArchiveFormat,
 };
 use regex::Regex;
@@ -36,35 +39,41 @@ pub struct GitHub {
     pub installations: Option<Arc<Mutex<Installations>>>,
 }
 
+pub struct CachedInstallation {
+    pub client: Octocrab,
+    pub repositories: Vec<Repository>,
+}
+
 pub struct Installations {
     pub app_client: Octocrab,
-    pub owner_to_installation: HashMap<String, InstallationId>,
-    pub clients: HashMap<InstallationId, Octocrab>,
+    pub clients: HashMap<InstallationId, CachedInstallation>,
+    pub repo_to_installation: HashMap<u64, InstallationId>,
 }
 
 impl Installations {
-    pub fn client_for_installation(
+    pub async fn client_for_installation(
         &mut self,
         installation_id: InstallationId,
-        owner: Option<&str>,
     ) -> Result<Octocrab> {
         match self.clients.entry(installation_id) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Occupied(entry) => Ok(entry.get().client.clone()),
             Entry::Vacant(entry) => {
                 // Create a new client for the installation
                 let client = self.app_client.installation(installation_id)?;
-                entry.insert(client.clone());
-                if let Some(owner) = owner {
-                    self.owner_to_installation.insert(owner.to_string(), installation_id);
-                }
+                let repositories = list_installation_repositories(&client)
+                    .await
+                    .context("Failed to fetch installation repositories")?;
+                self.repo_to_installation
+                    .extend(repositories.iter().map(|r| (r.id.into_inner(), installation_id)));
+                entry.insert(CachedInstallation { client: client.clone(), repositories });
                 Ok(client)
             }
         }
     }
 
-    pub fn client_for_owner(&mut self, owner: &str) -> Result<Option<Octocrab>> {
-        if let Some(installation_id) = self.owner_to_installation.get(owner) {
-            return self.client_for_installation(*installation_id, None).map(Some);
+    pub async fn client_for_repo(&mut self, repo_id: u64) -> Result<Option<Octocrab>> {
+        if let Some(installation_id) = self.repo_to_installation.get(&repo_id) {
+            return self.client_for_installation(*installation_id).await.map(Some);
         }
         Ok(None)
     }
@@ -77,24 +86,63 @@ pub struct GetCommit {
     sha: String,
 }
 
+#[derive(serde::Serialize)]
+struct PageParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per_page: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    page: Option<u32>,
+}
+
+async fn list_installation_repositories(app_client: &Octocrab) -> Result<Vec<Repository>> {
+    let mut page = 1;
+    let mut response: InstallationRepositories = app_client
+        .get(
+            "/installation/repositories",
+            Some(&PageParams { per_page: Some(100), page: Some(page) }),
+        )
+        .await?;
+    let mut repositories = response.repositories;
+    while repositories.len() < response.total_count as usize {
+        page += 1;
+        response = app_client
+            .get(
+                &format!("/installation/repositories?page={}", page),
+                Some(&PageParams { per_page: Some(100), page: Some(page) }),
+            )
+            .await?;
+        if response.repositories.is_empty() {
+            break;
+        }
+        repositories.extend(response.repositories);
+    }
+    Ok(repositories)
+}
+
 async fn list_installations(app_client: Octocrab) -> Result<Installations> {
-    let mut owner_to_installation = HashMap::new();
     let mut clients = HashMap::new();
+    let mut repo_to_installation = HashMap::new();
     {
         let mut stream =
             pin!(app_client.apps().installations().send().await?.into_stream(&app_client));
         while let Some(installation) = stream.try_next().await? {
-            let owner = installation.account.login;
-            if owner_to_installation.contains_key(&owner) {
-                tracing::warn!("Duplicate installation for {}", owner);
-                continue;
-            }
             let client = app_client.installation(installation.id)?;
-            owner_to_installation.insert(owner.clone(), installation.id);
-            clients.insert(installation.id, client);
+            let repositories = list_installation_repositories(&client).await?;
+            for repository in &repositories {
+                if repo_to_installation
+                    .insert(repository.id.into_inner(), installation.id)
+                    .is_some()
+                {
+                    tracing::warn!(
+                        "Duplicate installation for repository {}",
+                        repository.full_name.as_deref().unwrap_or_default()
+                    );
+                }
+            }
+            clients.insert(installation.id, CachedInstallation { client, repositories });
         }
     }
-    Ok(Installations { app_client, owner_to_installation, clients })
+    Ok(Installations { app_client, clients, repo_to_installation })
 }
 
 impl GitHub {
@@ -118,8 +166,25 @@ impl GitHub {
             let result =
                 list_installations(app_client).await.context("Failed to fetch installations")?;
             tracing::info!("Found {} installations", result.clients.len());
-            for (owner, installation_id) in &result.owner_to_installation {
-                tracing::info!("  - {}: {}", owner, installation_id);
+            for (installation_id, cached) in &result.clients {
+                let owners = cached
+                    .repositories
+                    .iter()
+                    .map(|r| r.owner.as_ref().map(|o| o.login.as_str()).unwrap_or_default())
+                    .collect::<HashSet<_>>();
+                let mut owner = String::new();
+                for o in owners {
+                    if !owner.is_empty() {
+                        owner.push_str(", ");
+                    }
+                    owner.push_str(o);
+                }
+                tracing::info!(
+                    "  - {}: {} ({} repositories)",
+                    owner,
+                    installation_id,
+                    cached.repositories.len()
+                );
             }
             Some(Arc::new(Mutex::new(result)))
         } else {
@@ -145,10 +210,10 @@ impl GitHub {
         }
     }
 
-    pub async fn client_for(&self, owner: &str) -> Result<Octocrab> {
+    pub async fn client_for(&self, repo_id: u64) -> Result<Octocrab> {
         if let Some(installations) = &self.installations {
             let mut installations = installations.lock().await;
-            if let Some(client) = installations.client_for_owner(owner)? {
+            if let Some(client) = installations.client_for_repo(repo_id).await? {
                 return Ok(client);
             }
         }
@@ -156,14 +221,20 @@ impl GitHub {
     }
 }
 
-pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64) -> Result<()> {
+pub async fn refresh_project(
+    github: &GitHub,
+    db: &Database,
+    repo_id: u64,
+    client_override: Option<&Octocrab>,
+    full_refresh: bool,
+) -> Result<usize> {
     let mut project_info = db
         .get_project_info_by_id(repo_id, None)
         .await
         .context("Failed to fetch project info")?
         .with_context(|| format!("Failed to fetch project info for ID {}", repo_id))?;
-    let repo = github
-        .client
+    let repo = client_override
+        .unwrap_or(&github.client)
         .repos_by_id(project_info.project.id)
         .get()
         .await
@@ -189,7 +260,10 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
 
     let project = &project_info.project;
     tracing::debug!("Refreshing project {}/{}", project.owner, project.repo);
-    let client = github.client_for(&project.owner).await?;
+    let client = match client_override {
+        Some(client) => client.clone(),
+        None => github.client_for(repo_id).await?,
+    };
 
     let workflow_ids = if let Some(workflow_id) = &project.workflow_id {
         vec![workflow_id.clone()]
@@ -204,7 +278,7 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
     };
     if workflow_ids.is_empty() {
         tracing::warn!("No workflows found for {}/{}", project.owner, project.repo);
-        return Ok(());
+        return Ok(0);
     }
     for workflow_id in workflow_ids {
         let workflow_id =
@@ -239,16 +313,14 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
                 }
             };
             for run in items {
-                if let Some(commit) = project_info.commit.as_ref() {
-                    if run.head_sha == commit.sha {
-                        break 'outer;
+                if !full_refresh {
+                    if let Some(commit) = project_info.commit.as_ref() {
+                        if run.head_sha == commit.sha {
+                            break 'outer;
+                        }
                     }
                 }
-                let run_id = run.id;
                 runs.push(run);
-                if run_id == RunId(stop_run_id) {
-                    break 'outer;
-                }
             }
             page += 1;
         }
@@ -291,7 +363,7 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
                 TaskResult { run_id, commit, result }
             });
         }
-        let mut found_artifacts = false;
+        let mut imported_artifacts = 0;
         while let Some(join_result) = set.join_next().await {
             match join_result {
                 Ok(TaskResult {
@@ -316,7 +388,7 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
                             commit.sha,
                             duration.as_millis()
                         );
-                        found_artifacts = true;
+                        imported_artifacts += 1;
                     }
                 }
                 Ok(TaskResult { run_id, commit, result: Err(e) }) => {
@@ -333,15 +405,15 @@ pub async fn run(github: &GitHub, db: &Database, repo_id: u64, stop_run_id: u64)
             }
         }
 
-        if found_artifacts {
+        if imported_artifacts > 0 {
             if project.workflow_id.is_none() {
                 db.update_project_workflow_id(project.id, workflow_id).await?;
             }
-            break;
+            return Ok(imported_artifacts);
         }
     }
 
-    Ok(())
+    Ok(0)
 }
 
 pub struct ProcessWorkflowRunResult {
@@ -388,6 +460,9 @@ pub async fn process_workflow_run(
         result: DownloadArtifactResult,
     }
     for artifact in &artifacts {
+        if artifact.expired {
+            continue;
+        }
         let artifact_name = artifact.name.clone();
         let version =
             if let Some(version) = regex.captures(&artifact_name).and_then(|c| c.name("version")) {
@@ -423,19 +498,29 @@ pub async fn process_workflow_run(
         match join_result {
             Ok(TaskResult { artifact_name: name, result: Ok(reports) }) => {
                 if reports.is_empty() {
-                    tracing::warn!("No report found in artifact {}", name);
+                    tracing::warn!("No report found in workflow run {} artifact {}", run_id, name);
                 } else {
                     for (version, report) in reports {
-                        tracing::info!("Processed artifact {} ({})", name, version);
+                        tracing::info!(
+                            "Processed workflow run {} artifact {} ({})",
+                            run_id,
+                            name,
+                            version
+                        );
                         result.artifacts.push(ProcessArtifactResult { version, report });
                     }
                 }
             }
             Ok(TaskResult { artifact_name: name, result: Err(e) }) => {
-                tracing::error!("Failed to process artifact {}: {:?}", name, e);
+                tracing::error!(
+                    "Failed to process workflow run {} artifact {}: {:?}",
+                    run_id,
+                    name,
+                    e
+                );
             }
             Err(e) => {
-                tracing::error!("Failed to process artifact: {:?}", e);
+                tracing::error!("Failed to process workflow run {} artifact: {:?}", run_id, e);
             }
         }
     }
@@ -484,8 +569,63 @@ async fn download_artifact(
 pub fn commit_from_head_commit(commit: &HeadCommit) -> Commit {
     Commit {
         sha: commit.id.clone(),
-        timestamp: UtcDateTime::from_unix_timestamp(commit.timestamp.to_utc().timestamp_millis())
-            .unwrap_or_else(|_| UtcDateTime::now()),
+        timestamp: UtcDateTime::from_unix_timestamp(
+            commit.timestamp.to_utc().timestamp_millis() / 1000,
+        )
+        .unwrap_or(UtcDateTime::UNIX_EPOCH),
         message: (!commit.message.is_empty()).then(|| commit.message.clone()),
     }
+}
+
+pub async fn check_for_reports(
+    client: &Octocrab,
+    project: &Project,
+    repo: &Repository,
+) -> Result<String> {
+    let workflow_ids = if let Some(workflow_id) = &project.workflow_id {
+        vec![workflow_id.clone()]
+    } else {
+        let workflows = client
+            .workflows(&project.owner, &project.repo)
+            .list()
+            .send()
+            .await
+            .context("Failed to fetch workflows")?;
+        workflows.items.into_iter().map(|w| w.path).collect()
+    };
+    if workflow_ids.is_empty() {
+        bail!("No workflows found in repository.");
+    }
+    let branch = repo.default_branch.as_deref().unwrap_or("main");
+    for workflow_id in workflow_ids {
+        let workflow_id =
+            workflow_id.strip_prefix(".github/workflows/").unwrap_or(workflow_id.as_str());
+        let result = client
+            .workflows(&project.owner, &project.repo)
+            .list_runs(workflow_id)
+            .branch(branch)
+            .event("push")
+            .status("completed")
+            .exclude_pull_requests(true)
+            .send()
+            .await;
+        let items = match result {
+            Ok(result) if result.items.is_empty() => continue,
+            Ok(result) => result.items,
+            Err(octocrab::Error::GitHub { source, .. })
+                if matches!(*source, GitHubError { status_code: StatusCode::NOT_FOUND, .. }) =>
+            {
+                continue;
+            }
+            Err(e) => {
+                return Err(e).context("Failed to fetch workflow runs");
+            }
+        };
+        let run = items.first().unwrap();
+        let result = process_workflow_run(&client, &project, run.id).await?;
+        if !result.artifacts.is_empty() {
+            return Ok(workflow_id.to_string());
+        }
+    }
+    Err(anyhow!("No workflow runs containing reports found."))
 }

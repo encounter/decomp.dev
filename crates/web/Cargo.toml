@@ -14,7 +14,7 @@ decomp-dev-github = { path = "../github" }
 decomp-dev-images = { path = "../images" }
 decomp-dev-scripts = { path = "../scripts" }
 itertools = "0.14"
-maud = { version = "0.27", features = ["axum"] }
+maud.workspace = true
 mime.workspace = true
 objdiff-core.workspace = true
 reqwest.workspace = true
@@ -23,7 +23,7 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 time.workspace = true
 timeago = { version = "0.4.2", default-features = false }
-tokio-cron-scheduler = "0.13"
+tokio-cron-scheduler = { version = "0.13", features = ["english"] }
 tokio.workspace = true
 tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["full"] }

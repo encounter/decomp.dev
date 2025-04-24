@@ -1,6 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::LazyLock,
+    time::{Duration, Instant},
+};
 
+use axum::http::StatusCode;
 use decomp_dev_auth::CurrentUser;
+use decomp_dev_core::AppError;
 use maud::{Markup, PreEscaped, html};
 use objdiff_core::bindings::report::Measures;
 use time::{UtcDateTime, macros::format_description};
@@ -23,18 +28,9 @@ pub fn header() -> Markup {
         meta name="viewport" content="width=device-width, initial-scale=1.0";
         meta name="color-scheme" content="dark light";
         meta name="darkreader-lock";
-        link rel="stylesheet" href="/css/main.min.css";
-        script src="/js/main.min.js" defer;
-        script {
-            r#"let theme = null;
-try {
-    theme = localStorage.getItem('theme');
-} catch (_) {
-}
-if (theme) {
-    document.documentElement.setAttribute('data-theme', theme);
-}"#
-        }
+        link rel="stylesheet" href="/css/main.min.css?3";
+        script src="/js/main.min.js" defer {}
+        script { (PreEscaped(r#"let t;try{t=localStorage.getItem("theme")}catch(_){}if(t)document.documentElement.setAttribute("data-theme",t);"#)) }
     }
 }
 
@@ -198,4 +194,31 @@ pub fn data_progress_sections(measures: &Measures) -> Markup {
             (out)
         }
     }
+}
+
+pub async fn get_robots() -> Result<String, AppError> {
+    static ROBOTS_CACHE: LazyLock<std::sync::RwLock<Option<String>>> =
+        LazyLock::new(|| std::sync::RwLock::new(None));
+    {
+        let cache =
+            ROBOTS_CACHE.read().map_err(|_| AppError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
+        if let Some(robots) = &*cache {
+            return Ok(robots.clone());
+        }
+    }
+    let response = reqwest::get(
+        "https://raw.githubusercontent.com/ai-robots-txt/ai.robots.txt/refs/heads/main/robots.txt",
+    )
+    .await?;
+    if response.status() != StatusCode::OK {
+        return Err(AppError::Status(StatusCode::BAD_GATEWAY));
+    }
+    let text = response.text().await?;
+    {
+        let mut cache = ROBOTS_CACHE
+            .write()
+            .map_err(|_| AppError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
+        *cache = Some(text.clone());
+    }
+    Ok(text)
 }

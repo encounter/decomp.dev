@@ -6,15 +6,16 @@ mod proto;
 use std::{
     fs::File,
     io::BufReader,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
 use axum::{
     Router,
-    extract::FromRef,
-    http::{Method, header},
+    extract::{ConnectInfo, FromRef},
+    http::{Method, Request, header},
 };
 use decomp_dev_core::config::{Config, GitHubConfig};
 use decomp_dev_db::Database;
@@ -25,10 +26,11 @@ use tower_http::{
     ServiceBuilderExt, cors,
     cors::CorsLayer,
     timeout::TimeoutLayer,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    trace::{DefaultOnResponse, MakeSpan, TraceLayer},
 };
-use tower_sessions::{Expiry, SessionManagerLayer, SessionStore};
+use tower_sessions::{Expiry, SessionManagerLayer, SessionStore, cookie::SameSite};
 use tower_sessions_sqlx_store::SqliteStore;
+use tracing::{Level, Span};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::handlers::build_router;
@@ -109,14 +111,15 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
         .sensitive_response_headers(sensitive_headers)
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+                .make_span_with(MyMakeSpan { level: Level::INFO })
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .layer(TimeoutLayer::new(Duration::from_secs(10)))
+        .layer(TimeoutLayer::new(Duration::from_secs(60)))
         .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
         .layer(
             SessionManagerLayer::new(session_store)
                 .with_secure(false)
+                .with_same_site(SameSite::Lax)
                 .with_expiry(Expiry::OnInactivity(time::Duration::days(1))),
         )
         .compression();
@@ -145,5 +148,50 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MyMakeSpan {
+    level: Level,
+}
+
+impl<B> MakeSpan<B> for MyMakeSpan {
+    fn make_span(&mut self, request: &Request<B>) -> Span {
+        let cf_connecting_ip = request.headers().get("CF-Connecting-IP");
+        let ip = if let Some(v) = cf_connecting_ip {
+            str::from_utf8(v.as_bytes()).ok().and_then(|s| IpAddr::from_str(s).ok())
+        } else if let Some(ConnectInfo(socket_addr)) =
+            request.extensions().get::<ConnectInfo<SocketAddr>>()
+        {
+            Some(socket_addr.ip())
+        } else {
+            None
+        };
+        let ip = ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+        let user_agent = request
+            .headers()
+            .get(header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("[unknown]");
+        macro_rules! make_span {
+            ($level:expr) => {
+                tracing::span!(
+                    $level,
+                    "request",
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    ip = %ip,
+                    user_agent = %user_agent,
+                )
+            }
+        }
+        match self.level {
+            Level::ERROR => make_span!(Level::ERROR),
+            Level::WARN => make_span!(Level::WARN),
+            Level::INFO => make_span!(Level::INFO),
+            Level::DEBUG => make_span!(Level::DEBUG),
+            Level::TRACE => make_span!(Level::TRACE),
+        }
     }
 }

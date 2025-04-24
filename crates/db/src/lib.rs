@@ -69,9 +69,9 @@ impl Database {
             })
             .build();
         let db = Self { pool, report_cache, report_unit_cache };
-        db.fixup_report_units().await?;
-        db.migrate_reports().await?;
-        // db.cleanup_report_units().await?;
+        db.fixup_report_units().await.context("Fixing report units")?;
+        db.migrate_reports().await.context("Migrating reports")?;
+        // db.cleanup_report_units().await.context("Running report cleanup")?;
         Ok(db)
     }
 
@@ -765,13 +765,24 @@ impl Database {
 
     pub async fn cleanup_report_units(&self) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
+        conn.execute("PRAGMA foreign_keys = OFF").await?;
+        let mut tx = conn.begin().await?;
+        let deleted_reports = sqlx::query!(
+            r#"
+            DELETE FROM reports
+            WHERE project_id NOT IN (SELECT id FROM projects)
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         let deleted_report_report_units = sqlx::query!(
             r#"
             DELETE FROM report_report_units
             WHERE report_id NOT IN (SELECT id FROM reports)
             "#,
         )
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
         let deleted_report_units = sqlx::query!(
@@ -780,12 +791,15 @@ impl Database {
             WHERE id NOT IN (SELECT report_unit_id FROM report_report_units)
             "#,
         )
-        .execute(&mut *conn)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
-        if deleted_report_units > 0 || deleted_report_report_units > 0 {
+        tx.commit().await?;
+        conn.execute("PRAGMA foreign_keys = ON").await?;
+        if deleted_reports > 0 || deleted_report_units > 0 || deleted_report_report_units > 0 {
             tracing::info!(
-                "Deleted {} orphaned report units and {} orphaned mappings",
+                "Deleted {} orphaned reports, {} orphaned report units and {} orphaned mappings",
+                deleted_reports,
                 deleted_report_units,
                 deleted_report_report_units,
             );
@@ -905,7 +919,7 @@ impl Database {
         sqlx::query!(
             r#"
             UPDATE projects
-            SET workflow_id = ?
+            SET workflow_id = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             "#,
             workflow_id,
@@ -927,7 +941,7 @@ impl Database {
         sqlx::query!(
             r#"
             UPDATE projects
-            SET owner = ?, repo = ?
+            SET owner = ?, repo = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             "#,
             owner,
@@ -939,23 +953,49 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_project_settings(
-        &self,
-        project_id: u64,
-        enable_pr_comments: bool,
-        default_version: Option<String>,
-    ) -> Result<()> {
+    pub async fn update_project(&self, project: &Project) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        let project_id_db = project_id as i64;
+        let project_id = project.id as i64;
         sqlx::query!(
             r#"
             UPDATE projects
-            SET enable_pr_comments = ?, default_version = ?
+            SET owner = ?, repo = ?, name = ?, short_name = ?, default_category = ?, default_version = ?, platform = ?, workflow_id = ?, enable_pr_comments = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             "#,
-            enable_pr_comments,
-            default_version,
-            project_id_db,
+            project.owner,
+            project.repo,
+            project.name,
+            project.short_name,
+            project.default_category,
+            project.default_version,
+            project.platform,
+            project.workflow_id,
+            project.enable_pr_comments,
+            project_id,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_project(&self, project: &Project) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id = project.id as i64;
+        sqlx::query!(
+            r#"
+            INSERT INTO projects (id, owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            "#,
+            project_id,
+            project.owner,
+            project.repo,
+            project.name,
+            project.short_name,
+            project.default_category,
+            project.default_version,
+            project.platform,
+            project.workflow_id,
+            project.enable_pr_comments,
         )
         .execute(&mut *conn)
         .await?;

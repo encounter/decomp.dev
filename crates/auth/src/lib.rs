@@ -1,10 +1,12 @@
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use axum::{
-    extract::{FromRef, FromRequestParts, OptionalFromRequestParts, Query, State},
-    http::{StatusCode, header::ACCEPT, request::Parts},
+    Extension,
+    extract::{FromRef, FromRequestParts, OptionalFromRequestParts, OriginalUri, Query, State},
+    http::{Method, StatusCode, header::ACCEPT, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use maud::{html, DOCTYPE};
 use decomp_dev_core::{AppError, config::GitHubConfig};
 use octocrab::{
     Octocrab,
@@ -13,9 +15,11 @@ use octocrab::{
 use rand::{TryRngCore, rngs::OsRng};
 use time::{Duration, UtcDateTime};
 use tower_sessions::Session;
+use url::form_urlencoded;
 
 const GITHUB_OAUTH_STATE: &str = "github_oauth_state";
 const CURRENT_USER: &str = "current_user";
+const RETURN_TO: &str = "return_to";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredOAuth {
@@ -50,6 +54,13 @@ pub struct CurrentUser {
 }
 
 impl CurrentUser {
+    pub fn client(&self) -> Result<Octocrab> {
+        Octocrab::builder()
+            .oauth(self.oauth.clone().into())
+            .build()
+            .context("Failed to create GitHub client")
+    }
+
     pub fn permissions_for_repo(&self, id: u64) -> Permissions {
         self.repos
             .iter()
@@ -82,8 +93,14 @@ impl From<Repository> for CurrentUserRepo {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct LoginQuery {
+    pub return_to: Option<String>,
+}
+
 pub async fn login(
     session: Session,
+    Query(LoginQuery { return_to }): Query<LoginQuery>,
     State(config): State<GitHubConfig>,
     current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
@@ -98,18 +115,40 @@ pub async fn login(
     OsRng.try_fill_bytes(&mut bytes)?;
     let nonce = URL_SAFE_NO_PAD.encode(bytes);
     session.insert(GITHUB_OAUTH_STATE, nonce.clone()).await?;
+    if let Some(return_to) = return_to {
+        if return_to.starts_with('/') {
+            session.insert(RETURN_TO, return_to).await?;
+        }
+    }
     let mut redirect_url = url::Url::parse("https://github.com/login/oauth/authorize")?;
     let mut query = redirect_url.query_pairs_mut();
     query.append_pair("client_id", &config.client_id);
     query.append_pair("redirect_uri", &config.redirect_uri);
     query.append_pair("state", &nonce);
     drop(query);
-    Ok(Redirect::to(redirect_url.as_str()).into_response())
+    Ok(html! {
+        (DOCTYPE)
+        html {
+            head {
+                meta charset="utf-8";
+                title { "Logging in... • decomp.dev" }
+                meta http-equiv="refresh" content=(format!("0;URL={redirect_url}"));
+                meta name="viewport" content="width=device-width, initial-scale=1.0";
+                meta name="color-scheme" content="dark light";
+                meta name="darkreader-lock";
+                link rel="stylesheet" href="/css/main.min.css?3";
+            }
+            body {
+                .loading-container {
+                    div aria-busy="true" { "Logging in..." }
+                }
+            }
+        }
+    }.into_response())
 }
 
 pub async fn logout(session: Session) -> Result<Response, AppError> {
-    session.remove_value(CURRENT_USER).await?;
-    session.remove_value(GITHUB_OAUTH_STATE).await?;
+    session.flush().await?;
     Ok(Redirect::to("/").into_response())
 }
 
@@ -175,8 +214,7 @@ pub async fn oauth(
     Query(OAuthQuery { code, state: oauth_state }): Query<OAuthQuery>,
     State(config): State<GitHubConfig>,
 ) -> Result<Response, AppError> {
-    let existing_state = session.get::<String>(GITHUB_OAUTH_STATE).await?;
-    let Some(existing_state) = existing_state else {
+    let Some(existing_state) = session.remove::<String>(GITHUB_OAUTH_STATE).await? else {
         tracing::warn!("No state found in session");
         return Ok((StatusCode::BAD_REQUEST, "No state found").into_response());
     };
@@ -184,12 +222,15 @@ pub async fn oauth(
         tracing::warn!("State mismatch: expected {}, got {}", existing_state, oauth_state);
         return Ok((StatusCode::BAD_REQUEST, "State mismatch").into_response());
     }
-    session.remove_value(GITHUB_OAUTH_STATE).await?;
 
     let current_user = fetch_access_token(&config, &code).await?;
     session.insert(CURRENT_USER, current_user).await?;
 
-    Ok(Redirect::to("/").into_response())
+    if let Some(return_to) = session.remove::<String>(RETURN_TO).await? {
+        Ok(Redirect::to(&return_to).into_response())
+    } else {
+        Ok(Redirect::to("/").into_response())
+    }
 }
 
 fn oauth_client() -> Octocrab {
@@ -225,6 +266,7 @@ async fn fetch_access_token(config: &GitHubConfig, code: &str) -> Result<Current
             client
                 .current()
                 .list_repos_for_authenticated_user()
+                .visibility("public")
                 .per_page(100)
                 .send()
                 .await
@@ -272,12 +314,32 @@ where
     GitHubConfig: FromRef<S>,
     S: Send + Sync,
 {
-    type Rejection = (StatusCode, &'static str);
+    type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        <CurrentUser as OptionalFromRequestParts<S>>::from_request_parts(parts, state)
-            .await?
-            .ok_or((StatusCode::UNAUTHORIZED, "Unauthorized"))
+        match <CurrentUser as OptionalFromRequestParts<S>>::from_request_parts(parts, state).await {
+            Ok(Some(user)) => Ok(user),
+            Ok(None) => {
+                let method =
+                    Method::from_request_parts(parts, state).await.unwrap_or(Method::OPTIONS);
+                if method != Method::GET {
+                    return Err((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+                }
+                let path_and_query =
+                    <Extension<OriginalUri> as FromRequestParts<S>>::from_request_parts(
+                        parts, state,
+                    )
+                    .await
+                    .ok()
+                    .and_then(|uri| uri.path_and_query().cloned())
+                    .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Unauthorized").into_response())?;
+                let mut redirect_uri = "/login?return_to=".to_string();
+                redirect_uri
+                    .extend(form_urlencoded::byte_serialize(path_and_query.as_str().as_bytes()));
+                Err(Redirect::to(&redirect_uri).into_response())
+            }
+            Err(e) => Err(e.into_response()),
+        }
     }
 }
 

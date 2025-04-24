@@ -264,20 +264,3 @@ pub fn generate_comment(
     }
     comment
 }
-
-#[allow(unused)]
-fn platform_name(platform: &str) -> &str {
-    match platform {
-        "gc" => "GameCube",
-        "wii" => "Wii",
-        "n64" => "Nintendo 64",
-        "switch" => "Nintendo Switch",
-        "3ds" => "Nintendo 3DS",
-        "nds" => "Nintendo DS",
-        "gba" => "Game Boy Advance",
-        "gbc" => "Game Boy Color",
-        "ps" => "PlayStation",
-        "ps2" => "PlayStation 2",
-        _ => platform,
-    }
-}

@@ -53,7 +53,7 @@ $breakpoints: (
     "layout/landmarks": true,
     "layout/container": true,
     "layout/section": true,
-    "layout/grid": false,
+    "layout/grid": true,
     "layout/overflow-auto": false,
 
     // Content
@@ -80,7 +80,7 @@ $breakpoints: (
     "components/card": true,
     "components/dropdown": true,
     "components/group": true,
-    "components/loading": false,
+    "components/loading": true,
     "components/modal": false,
     "components/nav": true,
     "components/progress": false,
@@ -344,5 +344,45 @@ footer {
 @media (prefers-reduced-motion: reduce) {
   #tooltip, #tooltip::after {
     transition: none;
+  }
+}
+
+.info-card {
+  background-color: $azure-500;
+  color: $white;
+}
+
+.warning-card {
+  background-color: $pumpkin-550;
+  color: $white;
+}
+
+.error-card {
+  background-color: $red-650;
+  color: $white;
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  margin: var(--pico-spacing);
+}
+
+.actions {
+  float: right;
+  position: relative;
+
+  .dropdown {
+    summary {
+      &::after {
+        margin-inline-start: 0;
+        transform: none;
+        height: 100%;
+      }
+    }
+
+    ul li {
+      text-align: left;
+    }
   }
 }

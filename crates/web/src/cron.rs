@@ -15,17 +15,28 @@ pub async fn create(
     {
         let state = state.clone();
         sched
-            .add(Job::new_async("0 0/5 * * * *", move |_uuid, _l| {
+            .add(Job::new_async("every 5 minutes", move |_uuid, _l| {
                 let state = state.clone();
                 Box::pin(async move {
-                    refresh_projects(&state).await.expect("Failed to refresh projects");
+                    refresh_projects(&state, false).await.expect("Failed to refresh projects");
+                })
+            })?)
+            .await?;
+    }
+    {
+        let state = state.clone();
+        sched
+            .add(Job::new_async("every 12 hours", move |_uuid, _l| {
+                let state = state.clone();
+                Box::pin(async move {
+                    refresh_projects(&state, true).await.expect("Failed to refresh projects");
                 })
             })?)
             .await?;
     }
     {
         sched
-            .add(Job::new_async("0 0 0/24 * * *", move |_uuid, _l| {
+            .add(Job::new_async("at midnight", move |_uuid, _l| {
                 let state = state.clone();
                 Box::pin(async move {
                     state.db.cleanup_report_units().await.expect("Failed to clean up report units");
@@ -35,7 +46,7 @@ pub async fn create(
     }
     {
         sched
-            .add(Job::new_async("0 0/1 * * * *", move |_uuid, _l| {
+            .add(Job::new_async("every 1 minute", move |_uuid, _l| {
                 let session_store = session_store.clone();
                 Box::pin(async move {
                     session_store
@@ -50,17 +61,25 @@ pub async fn create(
     Ok(sched)
 }
 
-pub async fn refresh_projects(state: &AppState) -> Result<()> {
+pub async fn refresh_projects(state: &AppState, full_refresh: bool) -> Result<()> {
     for project_info in state.db.get_projects().await? {
-        // Skip projects with active app installations
-        if let Some(installations) = &state.github.installations {
-            let installations = installations.lock().await;
-            if installations.owner_to_installation.contains_key(&project_info.project.owner) {
-                continue;
+        if !full_refresh {
+            // Skip projects with active app installations
+            if let Some(installations) = &state.github.installations {
+                let installations = installations.lock().await;
+                if installations.repo_to_installation.contains_key(&project_info.project.id) {
+                    continue;
+                }
             }
         }
-        if let Err(e) =
-            decomp_dev_github::run(&state.github, &state.db, project_info.project.id, 0).await
+        if let Err(e) = decomp_dev_github::refresh_project(
+            &state.github,
+            &state.db,
+            project_info.project.id,
+            None,
+            full_refresh,
+        )
+        .await
         {
             log::error!(
                 "Failed to refresh {}/{}: {:?}",

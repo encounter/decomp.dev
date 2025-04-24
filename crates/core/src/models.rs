@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, str::FromStr, sync::Arc};
 
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
 use serde::Serialize;
@@ -16,6 +16,23 @@ pub struct Project {
     pub platform: Option<String>,
     pub workflow_id: Option<String>,
     pub enable_pr_comments: bool,
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            owner: String::new(),
+            repo: String::new(),
+            name: None,
+            short_name: None,
+            default_category: None,
+            default_version: None,
+            platform: None,
+            workflow_id: None,
+            enable_pr_comments: true,
+        }
+    }
 }
 
 impl Project {
@@ -128,4 +145,78 @@ pub struct FrogressMapping {
     pub project_category: String,
     pub project_category_name: String,
     pub project_measure: String,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Platform {
+    GBA,
+    GBC,
+    N64,
+    DS,
+    PS,
+    PS2,
+    Switch,
+    GC,
+    Wii,
+}
+
+pub const ALL_PLATFORMS: &[Platform] = &[
+    Platform::GBA,
+    Platform::GBC,
+    Platform::N64,
+    Platform::DS,
+    Platform::PS,
+    Platform::PS2,
+    Platform::Switch,
+    Platform::GC,
+    Platform::Wii,
+];
+
+impl Platform {
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Self::GBA => "gba",
+            Self::GBC => "gbc",
+            Self::N64 => "n64",
+            Self::DS => "nds",
+            Self::PS => "ps",
+            Self::PS2 => "ps2",
+            Self::Switch => "switch",
+            Self::GC => "gc",
+            Self::Wii => "wii",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Platform::GBA => "Game Boy Advance",
+            Platform::GBC => "Game Boy Color",
+            Platform::N64 => "Nintendo 64",
+            Platform::DS => "Nintendo DS",
+            Platform::PS => "PlayStation",
+            Platform::PS2 => "PlayStation 2",
+            Platform::Switch => "Nintendo Switch",
+            Platform::GC => "GameCube",
+            Platform::Wii => "Wii",
+        }
+    }
+}
+
+impl FromStr for Platform {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "gba" => Ok(Self::GBA),
+            "gbc" => Ok(Self::GBC),
+            "n64" => Ok(Self::N64),
+            "nds" => Ok(Self::DS),
+            "ps" => Ok(Self::PS),
+            "ps2" => Ok(Self::PS2),
+            "switch" => Ok(Self::Switch),
+            "gc" => Ok(Self::GC),
+            "wii" => Ok(Self::Wii),
+            _ => Err(()),
+        }
+    }
 }

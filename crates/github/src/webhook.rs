@@ -81,7 +81,7 @@ pub async fn webhook(GitHubEvent { event, state }: GitHubEvent) -> Result<Respon
     };
     let client = if let Some(installation_id) = installation_id {
         let mut installations = installations.lock().await;
-        installations.client_for_installation(installation_id, owner.as_deref())?
+        installations.client_for_installation(installation_id).await?
     } else {
         state.github.client.clone()
     };
@@ -141,12 +141,8 @@ pub async fn webhook(GitHubEvent { event, state }: GitHubEvent) -> Result<Respon
                 InstallationWebhookEventAction::Deleted => {
                     // Remove the installation client
                     let mut installations = installations.lock().await;
-                    if let Some(owner) = &owner {
-                        installations.owner_to_installation.remove(owner);
-                    } else {
-                        tracing::warn!("Received installation deleted event with no owner");
-                    }
                     if let Some(installation_id) = installation_id {
+                        installations.repo_to_installation.retain(|_, v| *v != installation_id);
                         installations.clients.remove(&installation_id);
                     } else {
                         tracing::warn!(
@@ -155,6 +151,35 @@ pub async fn webhook(GitHubEvent { event, state }: GitHubEvent) -> Result<Respon
                     }
                 }
                 _ => {}
+            }
+        }
+        WebhookEventPayload::InstallationRepositories(inner) => {
+            tracing::info!(
+                "Installation {:?} for {} repositories changed",
+                inner.action,
+                owner.as_deref().unwrap_or("[unknown]")
+            );
+            let Some(installation_id) = installation_id else {
+                tracing::warn!("Received installation_repositories event with no installation ID");
+                return Ok((StatusCode::OK, "No installation ID").into_response());
+            };
+            let mut installations = installations.lock().await;
+            for repository in &inner.repositories_added {
+                tracing::info!("Added repository {}", repository.full_name);
+                installations
+                    .repo_to_installation
+                    .insert(repository.id.into_inner(), installation_id);
+            }
+            if !inner.repositories_removed.is_empty() {
+                for repository in &inner.repositories_removed {
+                    tracing::info!("Removed repository {}", repository.full_name);
+                }
+                installations.repo_to_installation.retain(|repo, id| {
+                    if *id != installation_id {
+                        return true;
+                    }
+                    inner.repositories_removed.iter().any(|r| r.id.into_inner() == *repo)
+                });
             }
         }
         _ => {}

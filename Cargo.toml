@@ -20,6 +20,7 @@ axum = { version = "0.8", features = ["macros"] }
 futures-util = "0.3.31"
 hex = "0.4"
 image = "0.25"
+maud = { version = "0.27", features = ["axum"] }
 mime = "0.3"
 objdiff-core = { version = "2.5", features = ["bindings"] }
 #objdiff-core = { path = "../objdiff/objdiff-core", features = ["bindings"] }

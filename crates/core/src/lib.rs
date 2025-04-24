@@ -20,7 +20,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             Self::Status(status) if status == StatusCode::NOT_FOUND => {
-                (status, "Not found!!").into_response()
+                (status, "Not found").into_response()
             }
             Self::Status(status) => status.into_response(),
             Self::Internal(err) => {

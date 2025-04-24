@@ -1025,6 +1025,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "decomp-dev-core",
+ "maud",
  "octocrab",
  "rand 0.9.1",
  "serde",
@@ -1248,6 +1249,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "english-to-cron"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a13a7d5e0ab3872c3ee478366eae624d89ab953d30276b0eee08169774ceb73"
+dependencies = [
+ "regex",
 ]
 
 [[package]]
@@ -5014,6 +5024,7 @@ checksum = "6a5597b569b4712cf78aa0c9ae29742461b7bda1e49c2a5fdad1d79bf022f8f0"
 dependencies = [
  "chrono",
  "croner",
+ "english-to-cron",
  "num-derive",
  "num-traits",
  "tokio",

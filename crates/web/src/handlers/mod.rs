@@ -11,23 +11,30 @@ use mime::Mime;
 use crate::AppState;
 
 mod common;
+mod manage;
 mod project;
 mod report;
 mod treemap;
 
 pub fn build_router() -> Router<AppState> {
     Router::new()
+        .route("/robots.txt", get(common::get_robots))
         .route("/api/github/webhook", post(decomp_dev_github::webhook::webhook))
         .route("/api/github/oauth", get(decomp_dev_auth::oauth))
         .route("/login", get(decomp_dev_auth::login))
         .route("/logout", post(decomp_dev_auth::logout))
+        .route("/manage", get(manage::manage))
+        .route("/manage/new", get(manage::new))
+        .route("/manage/new", post(manage::new_save))
+        .route("/manage/{owner}/{repo}", get(manage::manage_project))
+        .route("/manage/{owner}/{repo}", post(manage::manage_project_save))
+        .route("/manage/{owner}/{repo}/refresh", post(manage::manage_project_refresh))
         .route("/css/{*filename}", get(decomp_dev_scripts::get_css))
         .route("/js/{*filename}", get(decomp_dev_scripts::get_js))
         .route("/assets/{*filename}", get(decomp_dev_images::get_asset))
         .route("/og.png", get(decomp_dev_images::get_og))
         .route("/", get(project::get_projects))
         .route("/{owner}/{repo}", get(report::get_report))
-        .route("/{owner}/{repo}", post(report::save_project))
         .route("/{owner}/{repo}/{version}", get(report::get_report))
         .route("/{owner}/{repo}/{version}/{commit}", get(report::get_report))
 }
