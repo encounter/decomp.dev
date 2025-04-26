@@ -1,5 +1,8 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.8.0/schema.json",
+  "files": {
+    "ignore": ["node_modules", "dist", "package.json", "package-lock.json"]
+  },
   "organizeImports": {
     "enabled": true
   },
@@ -27,7 +30,16 @@
       "recommended": true,
       "a11y": {
         "all": false
-      }
+      },
+      "complexity": {
+        "noForEach": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      }      
     }
   }
 }

@@ -7,6 +7,6 @@ document.querySelectorAll('form[data-loading]').forEach((form) => {
     form.addEventListener('submit', () => {
         submitButton.disabled = true;
         submitButton.setAttribute('aria-busy', 'true');
-        submitButton.innerText = loadingText;
+        submitButton.innerText = loadingText || 'Loading...';
     });
 });

@@ -1,14 +1,3 @@
-type Unit = {
-    name: string;
-    fuzzy_match_percent: number;
-    total_code: number;
-    color: string;
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-};
-
 const unitBounds = (unit: Unit, width: number, height: number) => {
     return {
         x: unit.x * width,
@@ -258,7 +247,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     draw(canvas, units);
 };
 
-let remove = null;
+let remove: (() => void) | null = null;
 
 const updatePixelRatio = (redraw: () => void, now: boolean) => {
     if (remove != null) {
@@ -274,10 +263,5 @@ const updatePixelRatio = (redraw: () => void, now: boolean) => {
         redraw();
     }
 };
-
-// noinspection JSUnusedGlobalSymbols
-interface Window {
-    drawTreemap: (id: string, clickable: boolean, units: Unit[]) => void;
-}
 
 window.drawTreemap = drawTreemap;

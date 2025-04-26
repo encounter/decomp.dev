@@ -12,14 +12,14 @@ use decomp_dev_core::{
     AppError,
     models::{ALL_PLATFORMS, Project, ProjectInfo},
 };
-use decomp_dev_github::{check_for_reports, refresh_project};
+use decomp_dev_github::{check_for_reports, graphql::RepositoryPermission, refresh_project};
 use itertools::Itertools;
 use maud::{DOCTYPE, Markup, html};
 use serde::Deserialize;
 
 use crate::{
     AppState,
-    handlers::common::{footer, header, nav_links},
+    handlers::common::{chunks, footer, header, nav_links},
 };
 
 pub async fn manage(
@@ -33,7 +33,7 @@ pub async fn manage(
         .get_projects()
         .await?
         .into_iter()
-        .filter(|p| current_user.permissions_for_repo(p.project.id).admin)
+        .filter(|p| current_user.can_manage_repo(p.project.id))
         .sorted_by(|a, b| a.project.name().cmp(&b.project.name()))
         .collect::<Vec<_>>();
 
@@ -44,6 +44,8 @@ pub async fn manage(
                 meta charset="utf-8";
                 title { "Manage • decomp.dev" }
                 (header())
+                (chunks("main", true).await)
+                (chunks("manage", true).await)
             }
             body {
                 header {
@@ -109,15 +111,12 @@ async fn render_new(
     let projects = state.db.get_projects().await?;
 
     let repos = current_user
-        .repos
+        .data
+        .repositories
         .iter()
-        .filter(|r| r.permissions.admin)
+        .filter(|r| r.permission == RepositoryPermission::Admin)
         .map(|r| {
-            (
-                r.id.into_inner(),
-                format!("{}/{}", r.owner, r.repo),
-                projects.iter().any(|p| p.project.id == r.id.into_inner()),
-            )
+            (r.id, format!("{}/{}", r.owner, r.name), projects.iter().any(|p| p.project.id == r.id))
         })
         .collect::<Vec<_>>();
 
@@ -144,7 +143,8 @@ async fn render_new(
                 meta charset="utf-8";
                 title { "New Project • decomp.dev" }
                 (header())
-                script src="/js/manage.min.js" defer {}
+                (chunks("main", true).await)
+                (chunks("manage", true).await)
             }
             body {
                 header {
@@ -298,7 +298,7 @@ pub async fn manage_project(
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    if !current_user.permissions_for_repo(project_info.project.id).admin {
+    if !current_user.can_manage_repo(project_info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
 
@@ -356,7 +356,8 @@ async fn render_manage_project(
                 meta charset="utf-8";
                 title { (project_short_name) " • Manage" }
                 (header())
-                script src="/js/manage.min.js" defer {}
+                (chunks("main", true).await)
+                (chunks("manage", true).await)
             }
             body {
                 header {
@@ -498,7 +499,7 @@ pub async fn manage_project_save(
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    if !current_user.permissions_for_repo(project_info.project.id).admin {
+    if !current_user.can_manage_repo(project_info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
     let installation_id = if let Some(installations) = &state.github.installations {
@@ -543,7 +544,7 @@ pub async fn manage_project_refresh(
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    if !current_user.permissions_for_repo(project_info.project.id).admin {
+    if !current_user.can_manage_repo(project_info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
     let client = current_user.client()?;

@@ -1,0 +1,31 @@
+query ViewerQuery($after: String) {
+  viewer {
+    login
+    url
+    repositories(
+      first: 100,
+      after: $after,
+      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+      visibility: PUBLIC,
+    ) {
+      nodes {
+        ...repositoryFields
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }
+}
+
+fragment repositoryFields on Repository {
+  __typename
+  databaseId
+  owner {
+    __typename
+    login
+  }
+  name
+  viewerPermission
+}

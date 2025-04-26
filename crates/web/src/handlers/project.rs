@@ -20,7 +20,9 @@ use url::Url;
 
 use crate::{
     AppState,
-    handlers::common::{code_progress_sections, date, footer, header, nav_links, size, timeago},
+    handlers::common::{
+        chunks, code_progress_sections, date, footer, header, nav_links, size, timeago,
+    },
 };
 
 #[derive(Serialize)]
@@ -160,6 +162,7 @@ pub async fn get_projects(
                 meta charset="utf-8";
                 title { "Projects • decomp.dev" }
                 (header())
+                (chunks("main", true).await)
                 meta name="description" content="Decompilation progress reports";
                 meta property="og:title" content="Decompilation progress reports";
                 meta property="og:description" content="Progress reports for matching decompilation projects";

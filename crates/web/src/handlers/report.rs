@@ -29,7 +29,7 @@ use super::{parse_accept, treemap};
 use crate::{
     AppState,
     handlers::common::{
-        code_progress_sections, data_progress_sections, footer, header, nav_links, size,
+        chunks, code_progress_sections, data_progress_sections, footer, header, nav_links, size,
     },
     proto::{PROTOBUF, Protobuf},
 };
@@ -575,9 +575,8 @@ async fn render_report(
     let project_history_path = request_url.query_param("mode", Some("history"));
     let project_manage_path =
         format!("/manage/{}/{}", project_info.project.owner, project_info.project.repo);
-    let can_manage = current_user
-        .as_ref()
-        .is_some_and(|u| u.permissions_for_repo(project_info.project.id).admin);
+    let can_manage =
+        current_user.as_ref().is_some_and(|u| u.can_manage_repo(project_info.project.id));
     let canonical_url = request_url.with_path(&format!(
         "/{}/{}/{}/{}",
         project_info.project.owner, project_info.project.repo, report.version, report.commit.sha
@@ -670,12 +669,12 @@ async fn render_report(
                 meta charset="utf-8";
                 title { (project_short_name) " • Progress Report" }
                 (header())
+                (chunks("main", true).await)
                 meta name="description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:title" content=(format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
-                script src="/js/treemap.min.js" {}
             }
             body {
                 header {
@@ -812,6 +811,7 @@ async fn render_report(
                             }
                         }
                     }
+                    (chunks("report", false).await)
                     script {
                         (PreEscaped(r#"document.write('<canvas id="treemap" width="100%"></canvas>');drawTreemap("treemap","#))
                         (current_unit.is_none())
@@ -831,13 +831,13 @@ async fn render_report(
 
 async fn render_history(
     scope: &Scope<'_>,
-    state: &AppState,
+    _state: &AppState,
     uri: Uri,
     current_user: Option<CurrentUser>,
     start: Instant,
     result: Vec<ReportHistoryEntry>,
 ) -> Result<Markup> {
-    let Scope { report, project_info, measures, current_category, current_unit, units, label } =
+    let Scope { report, project_info, measures, current_category, current_unit, units: _, label } =
         scope;
 
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
@@ -904,12 +904,12 @@ async fn render_history(
                 meta charset="utf-8";
                 title { (project_short_name) " • Progress History" }
                 (header())
+                (chunks("main", true).await)
                 meta name="description" content=(format!("Decompilation progress history for {project_name}"));
                 meta property="og:title" content=(format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress history for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
-                link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css";
             }
             body {
                 header {
@@ -955,8 +955,7 @@ async fn render_history(
                             }
                         }
                     }
-                    script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js" {}
-                    script src="/js/history.min.js" {}
+                    (chunks("history", false).await)
                     script {
                         (PreEscaped(r#"document.write('<div id="chart" width="100%"></div>');renderChart("chart","#))
                         (PreEscaped(serde_json::to_string(&result)?))

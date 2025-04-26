@@ -1,8 +1,10 @@
 use std::{
+    collections::HashMap,
     sync::LazyLock,
     time::{Duration, Instant},
 };
 
+use anyhow::{Result, anyhow};
 use axum::http::StatusCode;
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::AppError;
@@ -28,10 +30,62 @@ pub fn header() -> Markup {
         meta name="viewport" content="width=device-width, initial-scale=1.0";
         meta name="color-scheme" content="dark light";
         meta name="darkreader-lock";
-        link rel="stylesheet" href="/css/main.min.css?3";
-        script src="/js/main.min.js" defer {}
         script { (PreEscaped(r#"let t;try{t=localStorage.getItem("theme")}catch(_){}if(t)document.documentElement.setAttribute("data-theme",t);"#)) }
     }
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebpackManifest {
+    // pub all_files: Vec<String>,
+    pub entries: HashMap<String, WebpackManifestEntry>,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebpackManifestEntry {
+    pub initial: WebpackManifestEntryPaths,
+    // pub r#async: WebpackManifestEntryPaths,
+    // pub html: Vec<String>,
+    // pub assets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WebpackManifestEntryPaths {
+    pub js: Vec<String>,
+    pub css: Vec<String>,
+}
+
+pub async fn manifest_paths(entry: &str) -> Result<WebpackManifestEntryPaths> {
+    let manifest_str = tokio::fs::read_to_string("dist/manifest.json").await?;
+    let manifest: WebpackManifest = serde_json::from_str(&manifest_str)?;
+    let entry = manifest
+        .entries
+        .get(entry)
+        .ok_or_else(|| anyhow!("Entry {} not found in manifest", entry))?;
+    Ok(entry.initial.clone())
+}
+
+pub async fn chunks(entry: &str, defer: bool) -> Markup {
+    let paths = manifest_paths(entry).await.unwrap_or_else(|e| {
+        tracing::error!("Failed to load chunks for {entry}: {e}");
+        Default::default()
+    });
+    let mut out = String::new();
+    for path in paths.css {
+        out.push_str(&html! { link rel="stylesheet" href=(path); }.0);
+    }
+    if defer {
+        for path in paths.js {
+            out.push_str(&html! { script src=(path) defer {} }.0);
+        }
+    } else {
+        for path in paths.js {
+            out.push_str(&html! { script src=(path) {} }.0);
+        }
+    }
+    PreEscaped(out)
 }
 
 pub fn footer(start: Instant, current_user: Option<&CurrentUser>) -> Markup {
@@ -51,7 +105,7 @@ pub fn footer(start: Instant, current_user: Option<&CurrentUser>) -> Markup {
                 span class="section" {
                     small class="muted" {
                         "Logged in as "
-                        a href=(user.profile.html_url) { "@" (user.profile.login) }
+                        a href=(user.data.url) { "@" (user.data.login) }
                     }
                     " | "
                     form action="/logout" method="post" style="display: inline" {

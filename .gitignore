@@ -4,3 +4,4 @@
 *.sqlite*
 config.yml
 .env
+dist/

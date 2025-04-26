@@ -6,20 +6,17 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use maud::{html, DOCTYPE};
 use decomp_dev_core::{AppError, config::GitHubConfig};
-use octocrab::{
-    Octocrab,
-    models::{Author, Permissions, Repository, RepositoryId},
-};
+use decomp_dev_github::graphql::{CurrentUserResponse, RepositoryPermission, fetch_current_user};
+use octocrab::{Octocrab, models::Author};
 use rand::{TryRngCore, rngs::OsRng};
 use time::{Duration, UtcDateTime};
 use tower_sessions::Session;
 use url::form_urlencoded;
 
-const GITHUB_OAUTH_STATE: &str = "github_oauth_state";
-const CURRENT_USER: &str = "current_user";
-const RETURN_TO: &str = "return_to";
+pub const GITHUB_OAUTH_STATE: &str = "github_oauth_state";
+pub const CURRENT_USER: &str = "current_user";
+pub const RETURN_TO: &str = "return_to";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredOAuth {
@@ -48,9 +45,7 @@ pub type Profile = Author;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentUser {
     pub oauth: StoredOAuth,
-    pub profile: Profile,
-    #[serde(default)]
-    pub repos: Vec<CurrentUserRepo>,
+    pub data: CurrentUserResponse,
 }
 
 impl CurrentUser {
@@ -61,95 +56,24 @@ impl CurrentUser {
             .context("Failed to create GitHub client")
     }
 
-    pub fn permissions_for_repo(&self, id: u64) -> Permissions {
-        self.repos
+    pub fn permissions_for_repo(&self, id: u64) -> RepositoryPermission {
+        self.data
+            .repositories
             .iter()
-            .find(|r| r.id.into_inner() == id)
-            .map(|r| r.permissions.clone())
-            .unwrap_or_else(default_permissions)
+            .find(|r| r.id == id)
+            .map(|r| r.permission.clone())
+            .unwrap_or(RepositoryPermission::None)
+    }
+
+    pub fn can_manage_repo(&self, id: u64) -> bool {
+        matches!(self.permissions_for_repo(id), RepositoryPermission::Admin)
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct CurrentUserRepo {
-    pub id: RepositoryId,
-    pub owner: String,
-    pub repo: String,
-    pub permissions: Permissions,
-}
-
-fn default_permissions() -> Permissions {
-    serde_json::from_str::<Permissions>(r#"{"push":false,"pull":false}"#).unwrap()
-}
-
-impl From<Repository> for CurrentUserRepo {
-    fn from(repo: Repository) -> Self {
-        Self {
-            id: repo.id,
-            owner: repo.owner.map(|o| o.login).unwrap_or_default(),
-            repo: repo.name,
-            permissions: repo.permissions.unwrap_or_else(default_permissions),
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-pub struct LoginQuery {
-    pub return_to: Option<String>,
-}
-
-pub async fn login(
-    session: Session,
-    Query(LoginQuery { return_to }): Query<LoginQuery>,
-    State(config): State<GitHubConfig>,
-    current_user: Option<CurrentUser>,
-) -> Result<Response, AppError> {
-    if current_user.is_some() {
-        return Ok(Redirect::to("/").into_response());
-    }
-    let Some(config) = &config.oauth else {
-        tracing::warn!("No GitHub OAuth config found");
-        return Ok((StatusCode::INTERNAL_SERVER_ERROR, "No GitHub OAuth config").into_response());
-    };
+pub fn generate_nonce() -> String {
     let mut bytes = [0u8; 16];
-    OsRng.try_fill_bytes(&mut bytes)?;
-    let nonce = URL_SAFE_NO_PAD.encode(bytes);
-    session.insert(GITHUB_OAUTH_STATE, nonce.clone()).await?;
-    if let Some(return_to) = return_to {
-        if return_to.starts_with('/') {
-            session.insert(RETURN_TO, return_to).await?;
-        }
-    }
-    let mut redirect_url = url::Url::parse("https://github.com/login/oauth/authorize")?;
-    let mut query = redirect_url.query_pairs_mut();
-    query.append_pair("client_id", &config.client_id);
-    query.append_pair("redirect_uri", &config.redirect_uri);
-    query.append_pair("state", &nonce);
-    drop(query);
-    Ok(html! {
-        (DOCTYPE)
-        html {
-            head {
-                meta charset="utf-8";
-                title { "Logging in... • decomp.dev" }
-                meta http-equiv="refresh" content=(format!("0;URL={redirect_url}"));
-                meta name="viewport" content="width=device-width, initial-scale=1.0";
-                meta name="color-scheme" content="dark light";
-                meta name="darkreader-lock";
-                link rel="stylesheet" href="/css/main.min.css?3";
-            }
-            body {
-                .loading-container {
-                    div aria-busy="true" { "Logging in..." }
-                }
-            }
-        }
-    }.into_response())
-}
-
-pub async fn logout(session: Session) -> Result<Response, AppError> {
-    session.flush().await?;
-    Ok(Redirect::to("/").into_response())
+    OsRng.try_fill_bytes(&mut bytes).unwrap();
+    URL_SAFE_NO_PAD.encode(bytes)
 }
 
 #[derive(serde::Deserialize)]
@@ -260,25 +184,9 @@ async fn fetch_access_token(config: &GitHubConfig, code: &str) -> Result<Current
         .await?;
     let oauth = StoredOAuth::from(oauth);
     let client = Octocrab::builder().oauth(oauth.clone().into()).build()?;
-    let profile = client.current().user().await.context("Failed to fetch current user")?;
-    let repos = client
-        .all_pages(
-            client
-                .current()
-                .list_repos_for_authenticated_user()
-                .visibility("public")
-                .per_page(100)
-                .send()
-                .await
-                .context("Failed to fetch current user repositories")?,
-        )
-        .await
-        .context("Failed to fetch current user repositories")?
-        .into_iter()
-        .map(CurrentUserRepo::from)
-        .collect::<Vec<_>>();
-    tracing::info!("Logged in as @{} ({} repos)", profile.login, repos.len());
-    Ok(CurrentUser { oauth, profile, repos })
+    let data = fetch_current_user(&client).await?;
+    tracing::info!("Logged in as @{} ({} repos)", data.login, data.repositories.len());
+    Ok(CurrentUser { oauth, data })
 }
 
 async fn refresh_access_token(
@@ -303,10 +211,8 @@ async fn refresh_access_token(
         )
         .await?;
     let oauth = StoredOAuth::from(oauth);
-    let client = Octocrab::builder().oauth(oauth.clone().into()).build()?;
-    let profile = client.current().user().await.context("Failed to fetch current user")?;
-    tracing::info!("Refreshed token for @{}", profile.login);
-    Ok(CurrentUser { oauth, profile, repos: prev_auth.repos.clone() })
+    tracing::info!("Refreshed token for @{}", prev_auth.data.login);
+    Ok(CurrentUser { oauth, data: prev_auth.data.clone() })
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -356,8 +262,13 @@ where
     ) -> Result<Option<Self>, Self::Rejection> {
         let session = Session::from_request_parts(parts, state).await?;
         let config = GitHubConfig::from_ref(state);
-        let Some(user) = session.get::<CurrentUser>(CURRENT_USER).await.ok().flatten() else {
-            return Ok(None);
+        let user = match session.get::<CurrentUser>(CURRENT_USER).await {
+            Ok(Some(user)) => user,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                tracing::warn!("Failed to fetch user from session: {}", e);
+                return Ok(None);
+            }
         };
         if let Some(expires_at) = user.oauth.expires_at {
             if (UtcDateTime::now() + Duration::seconds(30)) > expires_at {

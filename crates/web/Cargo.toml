@@ -12,7 +12,6 @@ decomp-dev-core = { path = "../core" }
 decomp-dev-db = { path = "../db" }
 decomp-dev-github = { path = "../github" }
 decomp-dev-images = { path = "../images" }
-decomp-dev-scripts = { path = "../scripts" }
 itertools = "0.14"
 maud.workspace = true
 mime.workspace = true

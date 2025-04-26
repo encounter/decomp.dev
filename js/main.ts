@@ -15,7 +15,7 @@ if (themeToggleButton) {
     });
 }
 
-let tooltipElem = null;
+let tooltipElem: HTMLElement | null = null;
 const applyTooltip = (elem: HTMLElement) => {
     const text = elem.getAttribute('data-tooltip');
     if (!text) {

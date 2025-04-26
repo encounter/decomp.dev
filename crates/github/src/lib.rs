@@ -1,4 +1,5 @@
 pub mod changes;
+pub mod graphql;
 pub mod webhook;
 
 use std::{
@@ -41,13 +42,29 @@ pub struct GitHub {
 
 pub struct CachedInstallation {
     pub client: Octocrab,
-    pub repositories: Vec<Repository>,
+    pub repositories: Vec<InstallationRepository>,
 }
 
 pub struct Installations {
     pub app_client: Octocrab,
     pub clients: HashMap<InstallationId, CachedInstallation>,
     pub repo_to_installation: HashMap<u64, InstallationId>,
+}
+
+pub struct InstallationRepository {
+    pub id: u64,
+    pub owner: String,
+    pub name: String,
+}
+
+impl From<Repository> for InstallationRepository {
+    fn from(value: Repository) -> Self {
+        Self {
+            id: value.id.into_inner(),
+            owner: value.owner.map(|o| o.login).unwrap_or_default(),
+            name: value.name,
+        }
+    }
 }
 
 impl Installations {
@@ -64,7 +81,7 @@ impl Installations {
                     .await
                     .context("Failed to fetch installation repositories")?;
                 self.repo_to_installation
-                    .extend(repositories.iter().map(|r| (r.id.into_inner(), installation_id)));
+                    .extend(repositories.iter().map(|r| (r.id, installation_id)));
                 entry.insert(CachedInstallation { client: client.clone(), repositories });
                 Ok(client)
             }
@@ -94,7 +111,9 @@ struct PageParams {
     page: Option<u32>,
 }
 
-async fn list_installation_repositories(app_client: &Octocrab) -> Result<Vec<Repository>> {
+async fn list_installation_repositories(
+    app_client: &Octocrab,
+) -> Result<Vec<InstallationRepository>> {
     let mut page = 1;
     let mut response: InstallationRepositories = app_client
         .get(
@@ -102,7 +121,8 @@ async fn list_installation_repositories(app_client: &Octocrab) -> Result<Vec<Rep
             Some(&PageParams { per_page: Some(100), page: Some(page) }),
         )
         .await?;
-    let mut repositories = response.repositories;
+    let mut repositories =
+        response.repositories.into_iter().map(InstallationRepository::from).collect::<Vec<_>>();
     while repositories.len() < response.total_count as usize {
         page += 1;
         response = app_client
@@ -114,7 +134,7 @@ async fn list_installation_repositories(app_client: &Octocrab) -> Result<Vec<Rep
         if response.repositories.is_empty() {
             break;
         }
-        repositories.extend(response.repositories);
+        repositories.extend(response.repositories.into_iter().map(InstallationRepository::from));
     }
     Ok(repositories)
 }
@@ -129,13 +149,11 @@ async fn list_installations(app_client: Octocrab) -> Result<Installations> {
             let client = app_client.installation(installation.id)?;
             let repositories = list_installation_repositories(&client).await?;
             for repository in &repositories {
-                if repo_to_installation
-                    .insert(repository.id.into_inner(), installation.id)
-                    .is_some()
-                {
+                if repo_to_installation.insert(repository.id, installation.id).is_some() {
                     tracing::warn!(
-                        "Duplicate installation for repository {}",
-                        repository.full_name.as_deref().unwrap_or_default()
+                        "Duplicate installation for repository {}/{}",
+                        repository.owner,
+                        repository.name
                     );
                 }
             }
@@ -167,11 +185,8 @@ impl GitHub {
                 list_installations(app_client).await.context("Failed to fetch installations")?;
             tracing::info!("Found {} installations", result.clients.len());
             for (installation_id, cached) in &result.clients {
-                let owners = cached
-                    .repositories
-                    .iter()
-                    .map(|r| r.owner.as_ref().map(|o| o.login.as_str()).unwrap_or_default())
-                    .collect::<HashSet<_>>();
+                let owners =
+                    cached.repositories.iter().map(|r| r.owner.as_str()).collect::<HashSet<_>>();
                 let mut owner = String::new();
                 for o in owners {
                     if !owner.is_empty() {
@@ -622,7 +637,7 @@ pub async fn check_for_reports(
             }
         };
         let run = items.first().unwrap();
-        let result = process_workflow_run(&client, &project, run.id).await?;
+        let result = process_workflow_run(client, project, run.id).await?;
         if !result.artifacts.is_empty() {
             return Ok(workflow_id.to_string());
         }

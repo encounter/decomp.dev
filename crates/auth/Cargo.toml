@@ -9,6 +9,7 @@ anyhow.workspace = true
 axum.workspace = true
 base64 = "0.22"
 decomp-dev-core = { path = "../core" }
+decomp-dev-github = { path = "../github" }
 maud.workspace = true
 octocrab.workspace = true
 rand = "0.9"

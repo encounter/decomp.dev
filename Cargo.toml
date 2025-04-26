@@ -6,7 +6,6 @@ members = [
     "crates/db",
     "crates/github",
     "crates/images",
-    "crates/scripts",
     "crates/web",
 ]
 
