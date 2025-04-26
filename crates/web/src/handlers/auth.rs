@@ -44,8 +44,8 @@ pub async fn login(
     }
     Ok(html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { "Logging in... • decomp.dev" }
                 meta http-equiv="refresh" content=(format!("0;URL={redirect_url}"));

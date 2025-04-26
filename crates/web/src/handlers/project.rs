@@ -157,8 +157,8 @@ pub async fn get_projects(
 
     let rendered = html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { "Projects • decomp.dev" }
                 (header())
@@ -251,8 +251,7 @@ fn project_fragment(
                 }
                 @if let Some(platform) = &info.project.platform {
                     @let platform_name = Platform::from_str(platform).map(|p| p.name()).unwrap_or(platform);
-                    img class="platform-icon" src=(format!("/assets/platforms/{}.svg", platform))
-                        alt=(platform_name) title=(platform_name) width="24" height="24";
+                    span class=(format!("platform-icon icon-{platform}")) title=(platform_name) {}
                 }
             }
             h6 {

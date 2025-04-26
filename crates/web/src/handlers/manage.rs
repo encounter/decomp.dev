@@ -39,8 +39,8 @@ pub async fn manage(
 
     Ok(html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { "Manage • decomp.dev" }
                 (header())
@@ -138,8 +138,8 @@ async fn render_new(
 
     Ok(html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { "New Project • decomp.dev" }
                 (header())
@@ -351,8 +351,8 @@ async fn render_manage_project(
 
     html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { (project_short_name) " • Manage" }
                 (header())

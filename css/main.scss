@@ -109,10 +109,6 @@ $breakpoints: (
   --pico-code-kbd-background-color: #333;
   --progress-background-color: #{$slate-800};
   --progress-stripe-color: rgba(255, 255, 255, 0.15);
-
-  .platform-icon {
-    filter: invert(1);
-  }
 }
 
 [data-theme=dark] {
@@ -124,6 +120,50 @@ $breakpoints: (
     @include pico-theme-dark;
   }
 }
+
+@font-face {
+  font-family: 'icons';
+  src: url('../assets/icons.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+[class^="icon-"], [class*=" icon-"] {
+  font-size: 0.9em;
+  line-height: 1em;
+
+  &:before {
+    display: inline-block;
+    width: 1em;
+    font-family: "icons";
+    font-style: normal;
+    font-weight: normal;
+    font-variant: normal;
+    text-decoration: inherit;
+    text-align: center;
+    text-transform: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.icon-history:before { content: '\e800'; }
+.icon-cog:before { content: '\e801'; }
+.icon-theme-light-dark:before { content: '\e802'; }
+.icon-chart-line:before { content: '\e803'; }
+.icon-github-circled:before { content: '\e804'; }
+.icon-left-open:before { content: '\e805'; }
+.icon-right-open:before { content: '\e806'; }
+
+.icon-gc:before { content: '\ea00'; }
+.icon-wii:before { content: '\ea01'; }
+.icon-n64:before { content: '\ea02'; }
+.icon-gba:before { content: '\ea03'; }
+.icon-nds:before { content: '\ea04'; }
+.icon-switch:before { content: '\ea05'; }
+.icon-ps:before { content: '\ea06'; }
+.icon-ps2:before { content: '\ea07'; }
 
 // Override the tooltip component
 [data-tooltip]:not(a, button, input) {
@@ -155,6 +195,12 @@ nav {
       }
     }
   }
+}
+
+#theme-toggle {
+  font-size: 1.33rem;
+  vertical-align: middle;
+  text-decoration: none;
 }
 
 @keyframes progress-stripes {
@@ -273,8 +319,7 @@ $unit-size: 0.75rem;
   }
 
   .platform-icon {
-    width: 1.5rem;
-    height: 1.5rem;
+    font-size: 1.5rem;
   }
 }
 

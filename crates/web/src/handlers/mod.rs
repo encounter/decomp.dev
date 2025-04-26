@@ -32,7 +32,6 @@ pub fn build_router() -> Router<AppState> {
         .route("/manage/{owner}/{repo}", get(manage::manage_project))
         .route("/manage/{owner}/{repo}", post(manage::manage_project_save))
         .route("/manage/{owner}/{repo}/refresh", post(manage::manage_project_refresh))
-        .route("/assets/{*filename}", get(decomp_dev_images::get_asset))
         .route("/og.png", get(decomp_dev_images::get_og))
         .route("/", get(project::get_projects))
         .route("/{owner}/{repo}", get(report::get_report))

@@ -664,8 +664,8 @@ async fn render_report(
 
     Ok(html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { (project_short_name) " • Progress Report" }
                 (header())
@@ -710,9 +710,19 @@ async fn render_report(
                         details class="dropdown" {
                             summary {}
                             ul dir="rtl" {
-                                li { a href=(project_history_path) { "History" } }
+                                li {
+                                    a href=(project_history_path) {
+                                        "History "
+                                        span .icon-chart-line { " " }
+                                    }
+                                }
                                 @if can_manage {
-                                    li { a href=(project_manage_path) { "Manage" } }
+                                    li {
+                                        a href=(project_manage_path) {
+                                            "Manage "
+                                            span .icon-cog { " " }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -764,20 +774,24 @@ async fn render_report(
                         div role="group" {
                             @if let Some(prev_commit_path) = prev_commit_path {
                                 a role="button" class="outline secondary" href=(prev_commit_path) {
-                                    "Previous"
+                                    span .icon-left-open {}
+                                    " Previous"
                                 }
                             } @else {
                                 button disabled class="outline secondary" {
-                                    "Previous"
+                                    span .icon-left-open {}
+                                    " Previous"
                                 }
                             }
                             @if let Some(next_commit_path) = next_commit_path {
                                 a role="button" class="outline secondary" href=(next_commit_path) {
-                                    "Next"
+                                    "Next "
+                                    span .icon-right-open {}
                                 }
                             } @else {
                                 button disabled class="outline secondary" {
-                                    "Next"
+                                    "Next "
+                                    span .icon-right-open {}
                                 }
                             }
                             @if let Some(latest_commit_path) = latest_commit_path {
@@ -899,8 +913,8 @@ async fn render_history(
 
     Ok(html! {
         (DOCTYPE)
-        html {
-            head lang="en" {
+        html lang="en" {
+            head {
                 meta charset="utf-8";
                 title { (project_short_name) " • Progress History" }
                 (header())
