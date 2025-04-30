@@ -16,6 +16,7 @@ use axum::{
     Router,
     extract::{ConnectInfo, FromRef},
     http::{Method, Request, header},
+    middleware,
 };
 use decomp_dev_core::config::{Config, GitHubConfig};
 use decomp_dev_db::Database;
@@ -33,7 +34,7 @@ use tower_sessions_sqlx_store::SqliteStore;
 use tracing::{Level, Span};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
-use crate::handlers::build_router;
+use crate::handlers::{build_router, csp::csp_middleware};
 
 #[derive(Clone, FromRef)]
 struct AppState {
@@ -88,16 +89,51 @@ async fn main() {
         .await
         .expect("Failed to create scheduler");
 
+    // Build the router
+    let port = state.config.server.port;
+    let router = app(state, session_store).into_make_service_with_connect_info::<SocketAddr>();
+
+    // Create the listener
+    let mut listener = None;
+    #[cfg(unix)]
+    {
+        use std::os::fd::{FromRawFd, IntoRawFd};
+        let fds = libsystemd::activation::receive_descriptors_with_names(false)
+            .expect("Failed to receive fds");
+        if let Some((fd, name)) = fds.into_iter().next() {
+            tracing::info!("Listening on {}", name);
+            let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd.into_raw_fd()) };
+            std_listener.set_nonblocking(true).expect("Failed to set non-blocking");
+            listener =
+                Some(TcpListener::from_std(std_listener).expect("Failed to create listener"));
+        }
+    }
+    let listener = match listener {
+        Some(listener) => listener,
+        None => {
+            let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+            tracing::info!("Listening on {}", addr);
+            TcpListener::bind(addr).await.expect("bind error")
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Ready])
+            .expect("Failed to notify");
+    }
+
     // Run our service
-    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, state.config.server.port));
-    tracing::info!("Listening on {}", addr);
-    axum::serve(
-        TcpListener::bind(addr).await.expect("bind error"),
-        app(state, session_store).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .expect("server error");
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("server error");
+
+    #[cfg(unix)]
+    {
+        libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Stopping])
+            .expect("Failed to notify");
+    }
 
     scheduler.shutdown().await.expect("Failed to shut down scheduler");
     db.close().await;
@@ -120,8 +156,9 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
             SessionManagerLayer::new(session_store)
                 .with_secure(false)
                 .with_same_site(SameSite::Lax)
-                .with_expiry(Expiry::OnInactivity(time::Duration::days(1))),
+                .with_expiry(Expiry::OnInactivity(time::Duration::days(30))),
         )
+        .layer(middleware::from_fn(csp_middleware))
         .compression();
     let router = build_router();
     #[cfg(debug_assertions)]

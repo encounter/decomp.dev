@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc, time::Instant};
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context, anyhow};
 use axum::{
@@ -20,16 +20,14 @@ use url::Url;
 
 use crate::{
     AppState,
-    handlers::common::{
-        chunks, code_progress_sections, date, footer, header, nav_links, size, timeago,
-    },
+    handlers::common::{Load, ProgressSections, TemplateContext, date, nav_links, size, timeago},
 };
 
-#[derive(Serialize)]
 struct ProjectInfoContext {
     project: Project,
     commit: Commit,
     measures: Measures,
+    code_progress: ProgressSections,
 }
 
 #[derive(Deserialize)]
@@ -59,12 +57,12 @@ pub struct ProgressSection {
 }
 
 pub async fn get_projects(
+    mut ctx: TemplateContext,
     State(state): State<AppState>,
     Query(query): Query<ProjectsQuery>,
     FullUri(uri): FullUri,
     current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
-    let start = Instant::now();
     let projects = state.db.get_projects().await?;
     let mut out = projects
         .iter()
@@ -74,6 +72,7 @@ pub async fn get_projects(
                 project: p.project.clone(),
                 commit: commit.clone(),
                 measures: Default::default(),
+                code_progress: Default::default(),
             })
         })
         .collect::<Vec<_>>();
@@ -108,6 +107,7 @@ pub async fn get_projects(
             Ok((info, Ok(Some(file)))) => {
                 if let Some(c) = out.iter_mut().find(|i| i.project.id == info.project.id) {
                     c.measures = *file.report.measures(info.project.default_category.as_deref());
+                    c.code_progress = ctx.code_progress_sections(&c.measures);
                 }
             }
             Ok((info, Ok(None))) => {
@@ -120,6 +120,11 @@ pub async fn get_projects(
                 tracing::error!("Failed to fetch report: {:?}", e);
             }
         }
+    }
+
+    let mut combined_styles = ProgressSections { nonce: ctx.nonce.clone(), ..Default::default() };
+    for info in &mut out {
+        combined_styles.width_classes.append(&mut info.code_progress.width_classes);
     }
 
     let current_sort_key = query.sort.as_deref().unwrap_or("updated");
@@ -161,8 +166,8 @@ pub async fn get_projects(
             head {
                 meta charset="utf-8";
                 title { "Projects • decomp.dev" }
-                (header())
-                (chunks("main", true).await)
+                (ctx.header().await)
+                (ctx.chunks("main", Load::Deferred).await)
                 meta name="description" content="Decompilation progress reports";
                 meta property="og:title" content="Decompilation progress reports";
                 meta property="og:description" content="Progress reports for matching decompilation projects";
@@ -221,15 +226,16 @@ pub async fn get_projects(
                             }
                         }
                     }
+                    (combined_styles)
                     @for project in out {
                         (project_fragment(project, current_sort, &canonical_url))
                     }
                 }
-                (footer(start, current_user.as_ref()))
+                (ctx.footer(current_user.as_ref()))
             }
         }
     };
-    Ok(rendered.into_response())
+    Ok((ctx, rendered).into_response())
 }
 
 fn project_fragment(
@@ -270,7 +276,7 @@ fn project_fragment(
                     }
                 }
             }
-            (code_progress_sections(&info.measures))
+            (info.code_progress)
             small class="muted" {
                 span title=(date(info.commit.timestamp)) { "Updated " (timeago(info.commit.timestamp)) }
                 " in commit "

@@ -1,3 +1,5 @@
+/// <reference types="@rsbuild/core/types" />
+
 type Unit = {
   name: string;
   fuzzy_match_percent: number;

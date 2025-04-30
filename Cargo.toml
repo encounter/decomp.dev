@@ -24,6 +24,7 @@ mime = "0.3"
 objdiff-core = { version = "2.5", features = ["bindings"] }
 #objdiff-core = { path = "../objdiff/objdiff-core", features = ["bindings"] }
 octocrab = { version = "0.44", features = ["stream"] }
+regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "zstd", "http2", "rustls-tls-native-roots"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

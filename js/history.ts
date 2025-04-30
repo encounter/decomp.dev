@@ -15,19 +15,26 @@ function percentValue(
   return rawValue == null ? '' : `${rawValue.toFixed(2)}%`;
 }
 
-window.renderChart = (id: string, data: ReportHistoryEntry[]) => {
+function renderChart(id: string, data: ReportHistoryEntry[]) {
   const chart = document.getElementById(id);
   if (!chart) {
     console.error(`Chart element with id ${id} not found`);
     return;
   }
+
   data.reverse();
+
+  function getSize() {
+    const container = chart!.parentElement;
+    if (container) {
+      return { width: container.offsetWidth, height };
+    }
+    return { width: 600, height };
+  }
 
   const u = new uPlot(
     {
-      id: id,
-      width: 600,
-      height: height,
+      ...getSize(),
       scales: {
         x: {
           time: true,
@@ -95,25 +102,22 @@ window.renderChart = (id: string, data: ReportHistoryEntry[]) => {
         ],
       },
     },
-    undefined,
+    [
+      data.map((e) => Date.parse(e.timestamp) / 1000),
+      data.map((e) => e.measures.fuzzy_match_percent || null),
+      data.map((e) => e.measures.matched_code_percent || null),
+      data.map((e) => e.measures.matched_data_percent || null),
+      data.map((e) => e.measures.complete_code_percent || null),
+      data.map((e) => e.measures.complete_data_percent || null),
+    ],
     chart,
   );
 
   function updateSize() {
-    const container = chart?.parentElement;
-    if (container) {
-      u.setSize({ width: container.offsetWidth, height });
-    }
+    u.setSize(getSize());
   }
 
   window.addEventListener('resize', updateSize);
-  updateSize();
-  u.setData([
-    data.map((e) => Date.parse(e.timestamp) / 1000),
-    data.map((e) => e.measures.fuzzy_match_percent || null),
-    data.map((e) => e.measures.matched_code_percent || null),
-    data.map((e) => e.measures.matched_data_percent || null),
-    data.map((e) => e.measures.complete_code_percent || null),
-    data.map((e) => e.measures.complete_data_percent || null),
-  ]);
-};
+}
+
+window.renderChart = renderChart;

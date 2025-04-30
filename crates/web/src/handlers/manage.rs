@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use anyhow::Result;
 use axum::{
     Form,
@@ -19,15 +17,14 @@ use serde::Deserialize;
 
 use crate::{
     AppState,
-    handlers::common::{chunks, footer, header, nav_links},
+    handlers::common::{Load, TemplateContext, nav_links},
 };
 
 pub async fn manage(
+    mut ctx: TemplateContext,
     State(state): State<AppState>,
     current_user: CurrentUser,
-) -> Result<Markup, AppError> {
-    let start = Instant::now();
-
+) -> Result<Response, AppError> {
     let projects = state
         .db
         .get_projects()
@@ -37,15 +34,15 @@ pub async fn manage(
         .sorted_by(|a, b| a.project.name().cmp(&b.project.name()))
         .collect::<Vec<_>>();
 
-    Ok(html! {
+    let rendered = html! {
         (DOCTYPE)
         html lang="en" {
             head {
                 meta charset="utf-8";
                 title { "Manage • decomp.dev" }
-                (header())
-                (chunks("main", true).await)
-                (chunks("manage", true).await)
+                (ctx.header().await)
+                (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("manage", Load::Deferred).await)
             }
             body {
                 header {
@@ -72,9 +69,10 @@ pub async fn manage(
                     }
                 }
             }
-            (footer(start, Some(&current_user)))
+            (ctx.footer(Some(&current_user)))
         }
-    })
+    };
+    Ok((ctx, rendered).into_response())
 }
 
 fn project_fragment(info: &ProjectInfo) -> Markup {
@@ -94,20 +92,20 @@ fn project_fragment(info: &ProjectInfo) -> Markup {
 }
 
 pub async fn new(
+    ctx: TemplateContext,
     State(state): State<AppState>,
     current_user: CurrentUser,
 ) -> Result<Response, AppError> {
-    render_new(&state, &current_user, None, None).await
+    render_new(ctx, &state, &current_user, None, None).await
 }
 
 async fn render_new(
+    mut ctx: TemplateContext,
     state: &AppState,
     current_user: &CurrentUser,
     message: Option<&str>,
     prefill: Option<&Project>,
 ) -> Result<Response, AppError> {
-    let start = Instant::now();
-
     let projects = state.db.get_projects().await?;
 
     let repos = current_user
@@ -136,15 +134,15 @@ async fn render_new(
         }
     };
 
-    Ok(html! {
+    let rendered = html! {
         (DOCTYPE)
         html lang="en" {
             head {
                 meta charset="utf-8";
                 title { "New Project • decomp.dev" }
-                (header())
-                (chunks("main", true).await)
-                (chunks("manage", true).await)
+                (ctx.header().await)
+                (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("manage", Load::Deferred).await)
             }
             body {
                 header {
@@ -198,9 +196,10 @@ async fn render_new(
                     }
                 }
             }
-            (footer(start, Some(current_user)))
+            (ctx.footer(Some(current_user)))
         }
-    }.into_response())
+    };
+    Ok((ctx, rendered).into_response())
 }
 
 fn platform_options(current_platform: Option<&str>) -> Markup {
@@ -228,6 +227,7 @@ pub struct NewForm {
 }
 
 pub async fn new_save(
+    ctx: TemplateContext,
     State(state): State<AppState>,
     current_user: CurrentUser,
     Form(form): Form<NewForm>,
@@ -245,6 +245,7 @@ pub async fn new_save(
         Err(e) => {
             tracing::error!("Failed to fetch repository: {:?}", e);
             return render_new(
+                ctx,
                 &state,
                 &current_user,
                 Some("Failed to fetch repository information."),
@@ -267,6 +268,7 @@ pub async fn new_save(
     };
     if repo.permissions.as_ref().is_none_or(|p| !p.admin) {
         return render_new(
+            ctx,
             &state,
             &current_user,
             Some("You do not have admin permissions on this repository."),
@@ -279,7 +281,7 @@ pub async fn new_save(
         Ok(workflow_id) => workflow_id,
         Err(e) => {
             let message = e.to_string();
-            return render_new(&state, &current_user, Some(&message), Some(&project)).await;
+            return render_new(ctx, &state, &current_user, Some(&message), Some(&project)).await;
         }
     };
     project.workflow_id = Some(workflow_id);
@@ -292,8 +294,8 @@ pub async fn manage_project(
     Path(params): Path<ProjectParams>,
     State(state): State<AppState>,
     current_user: CurrentUser,
-) -> Result<Markup, AppError> {
-    let start = Instant::now();
+    ctx: TemplateContext,
+) -> Result<Response, AppError> {
     let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
@@ -302,7 +304,7 @@ pub async fn manage_project(
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
 
-    Ok(render_manage_project(start, &state, &project_info, &current_user, Message::None).await)
+    render_manage_project(ctx, &state, &project_info, &current_user, Message::None).await
 }
 
 enum Message {
@@ -324,12 +326,12 @@ fn render_message(message: &Message) -> Markup {
 }
 
 async fn render_manage_project(
-    start: Instant,
+    mut ctx: TemplateContext,
     state: &AppState,
     project_info: &ProjectInfo,
     current_user: &CurrentUser,
     message: Message,
-) -> Markup {
+) -> Result<Response, AppError> {
     let project_short_name = project_info.project.short_name();
     let project_manage_path =
         format!("/manage/{}/{}", project_info.project.owner, project_info.project.repo);
@@ -349,15 +351,15 @@ async fn render_manage_project(
         None
     };
 
-    html! {
+    let rendered = html! {
         (DOCTYPE)
         html lang="en" {
             head {
                 meta charset="utf-8";
                 title { (project_short_name) " • Manage" }
-                (header())
-                (chunks("main", true).await)
-                (chunks("manage", true).await)
+                (ctx.header().await)
+                (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("manage", Load::Deferred).await)
             }
             body {
                 header {
@@ -458,9 +460,10 @@ async fn render_manage_project(
                     }
                 }
             }
-            (footer(start, Some(current_user)))
+            (ctx.footer(Some(current_user)))
         }
-    }
+    };
+    Ok((ctx, rendered).into_response())
 }
 
 fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -535,11 +538,11 @@ pub async fn manage_project_save(
 }
 
 pub async fn manage_project_refresh(
+    ctx: TemplateContext,
     Path(params): Path<ProjectParams>,
     State(state): State<AppState>,
     current_user: CurrentUser,
-) -> Result<Markup, AppError> {
-    let start = Instant::now();
+) -> Result<Response, AppError> {
     let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
@@ -563,5 +566,5 @@ pub async fn manage_project_refresh(
             Message::Error(format!("Failed to refresh project: {}", e))
         }
     };
-    Ok(render_manage_project(start, &state, &project_info, &current_user, message).await)
+    render_manage_project(ctx, &state, &project_info, &current_user, message).await
 }

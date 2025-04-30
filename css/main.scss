@@ -93,6 +93,12 @@ $breakpoints: (
 );
 @use "@picocss/pico/scss/colors" as *;
 
+@media (min-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+  :root {
+    scrollbar-gutter: stable both-edges;
+  }
+}
+
 [data-theme=light],
 :root:not([data-theme=dark]) {
   --pico-code-kbd-color: #000;
@@ -171,8 +177,11 @@ $breakpoints: (
   cursor: pointer;
 }
 
-nav {
-  > ul:first-child {
+nav > ul {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+
+  &:first-child {
     > li:first-child * {
       color: var(--pico-contrast);
     }
@@ -183,6 +192,12 @@ nav {
       vertical-align: baseline;
       content: "/";
       padding-left: 10px;
+    }
+
+    @media (max-width: map.get(map.get($breakpoints, "lg"), "breakpoint")) {
+      > li:has(+ .md):after {
+        display: none;
+      }
     }
 
     @media (max-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
@@ -203,13 +218,8 @@ nav {
   text-decoration: none;
 }
 
-@keyframes progress-stripes {
-  0% {
-    background-position: 0 0
-  }
-  to {
-    background-position: calc(2.5rem) 0
-  }
+pre {
+  scrollbar-width: thin;
 }
 
 $progress-height: 2rem;
@@ -223,7 +233,6 @@ $progress-height: 2rem;
   margin-bottom: var(--pico-spacing);
 
   .progress-section.striped {
-    //animation: progress-stripes 1s linear infinite;
     background-image: linear-gradient(
                     45deg,
                     var(--progress-stripe-color) 25%,
@@ -238,25 +247,25 @@ $progress-height: 2rem;
   }
 
   &.code {
-    .progress-section:nth-child(1) {
+    .progress-section:nth-of-type(1) {
       background-color: $jade-400;
     }
 
-    .progress-section:nth-child(2) {
+    .progress-section:nth-of-type(2) {
       background-color: $jade-500;
     }
 
-    .progress-section:nth-child(3) {
+    .progress-section:nth-of-type(3) {
       background-color: transparent;
     }
   }
 
   &.data {
-    .progress-section:nth-child(1) {
+    .progress-section:nth-of-type(1) {
       background-color: $azure-400;
     }
 
-    .progress-section:nth-child(2) {
+    .progress-section:nth-of-type(2) {
       background-color: $azure-500;
     }
   }
@@ -323,13 +332,13 @@ $unit-size: 0.75rem;
   }
 }
 
-@media (max-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+@media (max-width: map.get(map.get($breakpoints, "lg"), "breakpoint")) {
   .md {
     display: none !important;
   }
 }
 
-@media (min-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+@media (min-width: map.get(map.get($breakpoints, "lg"), "breakpoint")) {
   .sm {
     display: none !important;
   }
@@ -339,19 +348,30 @@ $unit-size: 0.75rem;
   margin-top: calc(var(--pico-block-spacing-vertical) * 2);
 }
 
-footer {
+body > footer {
   display: flex;
   justify-content: space-between;
 
   // Log out button
-  input[type="submit"] {
-    padding: .3em;
-    margin: 0;
-    background: none;
-    border: none;
-    width: auto;
-    font-size: .875em;
-    height: auto;
+  form {
+    display: inline;
+
+    input[type="submit"] {
+      padding: .3em;
+      margin: 0;
+      background: none;
+      border: none;
+      width: auto;
+      font-size: .875em;
+      height: auto;
+    }
+  }
+}
+
+@media (max-width: map.get(map.get($breakpoints, "md"), "breakpoint")) {
+  body > footer {
+    flex-flow: column;
+    align-items: center;
   }
 }
 
@@ -416,6 +436,7 @@ footer {
 .actions {
   float: right;
   position: relative;
+  margin-inline-start: 1em;
 
   .dropdown {
     summary {
@@ -430,4 +451,8 @@ footer {
       text-align: left;
     }
   }
+}
+
+details.dropdown {
+  clear: right;
 }

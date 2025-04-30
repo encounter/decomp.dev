@@ -2,17 +2,20 @@ use std::str::FromStr;
 
 use axum::{
     Router,
-    http::{HeaderMap, header},
+    extract::Request,
+    http::{HeaderMap, HeaderValue, header},
     routing::{get, post},
 };
 use decomp_dev_images::image_mime_from_ext;
 use mime::Mime;
+use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
 use crate::AppState;
 
 mod auth;
 mod common;
+pub mod csp;
 mod manage;
 mod project;
 mod report;
@@ -20,7 +23,31 @@ mod treemap;
 
 pub fn build_router() -> Router<AppState> {
     Router::new()
-        .nest_service("/static", ServeDir::new("dist/static"))
+        .nest_service(
+            "/static",
+            <ServeDir as ServiceExt<Request>>::map_response(
+                ServeDir::new("dist/static"),
+                |mut response| {
+                    // Cache static (hashed) files for a year, mark immutable
+                    response.headers_mut().insert(
+                        header::CACHE_CONTROL,
+                        HeaderValue::from_static("public, max-age=31536000, immutable"),
+                    );
+                    response
+                },
+            ),
+        )
+        .fallback_service(<ServeDir as ServiceExt<Request>>::map_response(
+            ServeDir::new("dist"),
+            |mut response| {
+                // Cache non-hashed public files for a day, mark must-revalidate
+                response.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=86400, must-revalidate"),
+                );
+                response
+            },
+        ))
         .route("/robots.txt", get(common::get_robots))
         .route("/api/github/webhook", post(decomp_dev_github::webhook::webhook))
         .route("/api/github/oauth", get(decomp_dev_auth::oauth))

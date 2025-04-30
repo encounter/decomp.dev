@@ -16,6 +16,7 @@ itertools = "0.14"
 maud.workspace = true
 mime.workspace = true
 objdiff-core.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -39,3 +40,6 @@ image.workspace = true
 # proto
 bytes = "1.7"
 prost = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libsystemd = "0.7"

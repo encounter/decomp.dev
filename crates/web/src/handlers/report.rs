@@ -1,4 +1,4 @@
-use std::{borrow::Cow, iter, time::Instant};
+use std::{borrow::Cow, iter};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -18,7 +18,7 @@ use decomp_dev_images::{
     treemap::{layout_units, unit_color},
 };
 use image::ImageFormat;
-use maud::{DOCTYPE, Markup, PreEscaped, html};
+use maud::{DOCTYPE, PreEscaped, html};
 use mime::Mime;
 use objdiff_core::bindings::report::{Measures, ReportCategory, ReportUnit};
 use serde::{Deserialize, Serialize};
@@ -28,9 +28,7 @@ use url::Url;
 use super::{parse_accept, treemap};
 use crate::{
     AppState,
-    handlers::common::{
-        chunks, code_progress_sections, data_progress_sections, footer, header, nav_links, size,
-    },
+    handlers::common::{Load, TemplateContext, escape_script, nav_links, size},
     proto::{PROTOBUF, Protobuf},
 };
 
@@ -190,8 +188,8 @@ pub async fn get_report(
     FullUri(uri): FullUri,
     State(state): State<AppState>,
     current_user: Option<CurrentUser>,
+    ctx: TemplateContext,
 ) -> Result<Response, AppError> {
-    let start = Instant::now();
     let (params, ext) = extract_extension(params);
     let acceptable = parse_accept(&headers, ext.as_deref());
     if acceptable.is_empty() {
@@ -230,11 +228,9 @@ pub async fn get_report(
     let scope = apply_scope(&report, &project_info, &query)?;
     match query.mode.as_deref().unwrap_or("report").to_ascii_lowercase().as_str() {
         "shield" => mode_shield(&scope, query, &acceptable),
-        "report" => mode_report(&scope, &state, uri, query, start, &acceptable, current_user).await,
+        "report" => mode_report(&scope, &state, uri, query, ctx, &acceptable, current_user).await,
         "measures" => mode_measures(&scope, &acceptable),
-        "history" => {
-            mode_history(&scope, &state, uri, query, start, &acceptable, current_user).await
-        }
+        "history" => mode_history(&scope, &state, uri, query, ctx, &acceptable, current_user).await,
         _ => Err(AppError::Status(StatusCode::BAD_REQUEST)),
     }
 }
@@ -245,7 +241,7 @@ async fn mode_report(
     state: &AppState,
     uri: Uri,
     query: ReportQuery,
-    start: Instant,
+    ctx: TemplateContext,
     acceptable: &[Mime],
     current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
@@ -253,8 +249,7 @@ async fn mode_report(
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
-            let rendered = render_report(scope, state, uri, current_user, start).await?;
-            return Ok(rendered.into_response());
+            return render_report(scope, state, uri, current_user, ctx).await;
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
             let flattened = scope.report.report.flatten();
             return Ok(Json(flattened).into_response());
@@ -340,7 +335,7 @@ async fn mode_history(
     state: &AppState,
     uri: Uri,
     query: ReportQuery,
-    start: Instant,
+    ctx: TemplateContext,
     acceptable: &[Mime],
     current_user: Option<CurrentUser>,
 ) -> Result<Response, AppError> {
@@ -385,7 +380,7 @@ async fn mode_history(
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
-            let rendered = render_history(scope, state, uri, current_user, start, result).await?;
+            let rendered = render_history(scope, state, uri, current_user, ctx, result).await?;
             return Ok(rendered.into_response());
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
             return Ok(Json(result).into_response());
@@ -536,8 +531,8 @@ async fn render_report(
     state: &AppState,
     uri: Uri,
     current_user: Option<CurrentUser>,
-    start: Instant,
-) -> Result<Markup> {
+    mut ctx: TemplateContext,
+) -> Result<Response, AppError> {
     let Scope { report, project_info, measures, current_category, current_unit, units, label } =
         scope;
 
@@ -656,22 +651,28 @@ async fn render_report(
     } else {
         project_info.project.name()
     };
-    let project_short_name = if let Some(label) = label {
-        Cow::Owned(format!("{} ({})", project_info.project.short_name(), label))
+    let project_short_name = project_info.project.short_name();
+    let project_short_name_with_label = if let Some(label) = label {
+        Cow::Owned(format!("{} ({})", project_short_name, label))
     } else {
-        Cow::Borrowed(project_info.project.short_name())
+        Cow::Borrowed(project_short_name)
     };
 
-    Ok(html! {
+    // Load blocking resources first so we don't duplicate them
+    let header = ctx.header().await;
+    let report_chunks = ctx.chunks("report", Load::Blocking).await;
+
+    let rendered = html! {
         (DOCTYPE)
         html lang="en" {
             head {
                 meta charset="utf-8";
-                title { (project_short_name) " • Progress Report" }
-                (header())
-                (chunks("main", true).await)
+                title { (project_short_name_with_label) " • Progress Report" }
+                (header)
+                (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("report", Load::Preload).await)
                 meta name="description" content=(format!("Decompilation progress report for {project_name}"));
-                meta property="og:title" content=(format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent));
+                meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
@@ -727,7 +728,7 @@ async fn render_report(
                             }
                         }
                     }
-                    h3 { (format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent)) }
+                    h3 { (format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent)) }
                     @if current_unit.is_none() && measures.complete_code_percent > 0.0 {
                         h4 class="muted" { (format!("{:.2}% fully linked", measures.complete_code_percent)) }
                     }
@@ -751,14 +752,14 @@ async fn render_report(
                             "Code "
                             small class="muted" { "(" (size(measures.total_code)) ")" }
                         }
-                        (code_progress_sections(&measures))
+                        (ctx.code_progress_sections(&measures))
                     }
                     @if measures.total_data > 0 {
                         h6 class="report-header" {
                             "Data "
                             small class="muted" { "(" (size(measures.total_data)) ")" }
                         }
-                        (data_progress_sections(&measures))
+                        (ctx.data_progress_sections(&measures))
                     }
                     h6 class="report-header" { "Commit" }
                     div {
@@ -774,24 +775,24 @@ async fn render_report(
                         div role="group" {
                             @if let Some(prev_commit_path) = prev_commit_path {
                                 a role="button" class="outline secondary" href=(prev_commit_path) {
-                                    span .icon-left-open {}
+                                    span .icon-left-open .md {}
                                     " Previous"
                                 }
                             } @else {
                                 button disabled class="outline secondary" {
-                                    span .icon-left-open {}
+                                    span .icon-left-open .md {}
                                     " Previous"
                                 }
                             }
                             @if let Some(next_commit_path) = next_commit_path {
                                 a role="button" class="outline secondary" href=(next_commit_path) {
                                     "Next "
-                                    span .icon-right-open {}
+                                    span .icon-right-open .md {}
                                 }
                             } @else {
                                 button disabled class="outline secondary" {
                                     "Next "
-                                    span .icon-right-open {}
+                                    span .icon-right-open .md {}
                                 }
                             }
                             @if let Some(latest_commit_path) = latest_commit_path {
@@ -825,22 +826,25 @@ async fn render_report(
                             }
                         }
                     }
-                    (chunks("report", false).await)
-                    script {
-                        (PreEscaped(r#"document.write('<canvas id="treemap" width="100%"></canvas>');drawTreemap("treemap","#))
+                    canvas #treemap {}
+                    (report_chunks)
+                    script nonce=[ctx.nonce.as_deref()] {
+                        (PreEscaped(r#"window.units="#))
+                        (escape_script(&serde_json::to_string(&units)?))
+                        (PreEscaped(r#";drawTreemap("treemap","#))
                         (current_unit.is_none())
-                        ","
-                        (PreEscaped(serde_json::to_string(&units)?))
-                        ");"
+                        (PreEscaped(r#",window.units)"#))
                     }
                     noscript {
+                        style nonce=[ctx.nonce.as_deref()] { "canvas{display:none}" }
                         img #treemap src=(image_url) alt="Progress graph";
                     }
                 }
             }
-            (footer(start, current_user.as_ref()))
+            (ctx.footer(current_user.as_ref()))
         }
-    })
+    };
+    Ok((ctx, rendered).into_response())
 }
 
 async fn render_history(
@@ -848,9 +852,9 @@ async fn render_history(
     _state: &AppState,
     uri: Uri,
     current_user: Option<CurrentUser>,
-    start: Instant,
+    mut ctx: TemplateContext,
     result: Vec<ReportHistoryEntry>,
-) -> Result<Markup> {
+) -> Result<Response, AppError> {
     let Scope { report, project_info, measures, current_category, current_unit, units: _, label } =
         scope;
 
@@ -905,22 +909,28 @@ async fn render_history(
     } else {
         project_info.project.name()
     };
-    let project_short_name = if let Some(label) = label {
-        Cow::Owned(format!("{} ({})", project_info.project.short_name(), label))
+    let project_short_name = project_info.project.short_name();
+    let project_short_name_with_label = if let Some(label) = label {
+        Cow::Owned(format!("{} ({})", project_short_name, label))
     } else {
-        Cow::Borrowed(project_info.project.short_name())
+        Cow::Borrowed(project_short_name)
     };
 
-    Ok(html! {
+    // Load blocking resources first so we don't duplicate them
+    let header = ctx.header().await;
+    let history_chunks = ctx.chunks("history", Load::Blocking).await;
+
+    let rendered = html! {
         (DOCTYPE)
         html lang="en" {
             head {
                 meta charset="utf-8";
-                title { (project_short_name) " • Progress History" }
-                (header())
-                (chunks("main", true).await)
+                title { (project_short_name_with_label) " • Progress History" }
+                (header)
+                (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("history", Load::Preload).await)
                 meta name="description" content=(format!("Decompilation progress history for {project_name}"));
-                meta property="og:title" content=(format!("{project_short_name} is {:.2}% decompiled", measures.matched_code_percent));
+                meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress history for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
@@ -946,7 +956,7 @@ async fn render_history(
                     }
                 }
                 main {
-                    h3 { "History for " (project_short_name) }
+                    h3 { "History for " (project_short_name_with_label) }
                     details class="dropdown" title="Version" {
                         summary { (report.version) }
                         ul {
@@ -969,11 +979,12 @@ async fn render_history(
                             }
                         }
                     }
-                    (chunks("history", false).await)
-                    script {
-                        (PreEscaped(r#"document.write('<div id="chart" width="100%"></div>');renderChart("chart","#))
-                        (PreEscaped(serde_json::to_string(&result)?))
-                        (PreEscaped(r#");"#))
+                    #chart {}
+                    (history_chunks)
+                    script nonce=[ctx.nonce.as_deref()] {
+                        (PreEscaped(r#"window.historyData="#))
+                        (escape_script(&serde_json::to_string(&result)?))
+                        (PreEscaped(r#";renderChart("chart",window.historyData)"#))
                     }
                     hr;
                     div role="group" {
@@ -981,7 +992,8 @@ async fn render_history(
                     }
                 }
             }
-            (footer(start, current_user.as_ref()))
+            (ctx.footer(current_user.as_ref()))
         }
-    })
+    };
+    Ok((ctx, rendered).into_response())
 }
