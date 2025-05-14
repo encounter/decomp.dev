@@ -1,24 +1,23 @@
 {
-	"compilerOptions": {
-	  "lib": ["DOM", "ES2023"],
-	  "jsx": "react-jsx",
-	  "target": "ES2022",
-	  "noEmit": true,
-	  "skipLibCheck": true,
-	  "useDefineForClassFields": true,
-  
-	  /* modules */
-	  "module": "ESNext",
-	  "isolatedModules": true,
-	  "resolveJsonModule": true,
-	  "moduleResolution": "Bundler",
-	  "allowImportingTsExtensions": true,
-  
-	  /* type checking */
-	  "strict": true,
-	  "noUnusedLocals": true,
-	  "noUnusedParameters": true
-	},
-	"include": ["js"]
-  }
-  
+  "compilerOptions": {
+    "lib": ["DOM", "ES2023"],
+    "jsx": "react-jsx",
+    "target": "ES2022",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "useDefineForClassFields": true,
+
+    /* modules */
+    "module": "ESNext",
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+
+    /* type checking */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["js"]
+}

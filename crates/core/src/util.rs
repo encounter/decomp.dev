@@ -60,3 +60,16 @@ pub fn join_normalized(base: impl AsRef<Path>, path: impl AsRef<Path>) -> PathBu
     out.extend(path.as_ref().components().filter(|v| matches!(v, std::path::Component::Normal(_))));
     out
 }
+
+/// Format a size in bytes to a human-readable string.
+/// Uses SI (kilo = 1000) units, formatted to two decimal places.
+pub fn size(value: u64) -> String {
+    let units = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+    let mut value = value as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < units.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    format!("{:.2} {}", value, units[unit])
+}

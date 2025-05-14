@@ -6,15 +6,17 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-resvg = "0.45"
-tracing.workspace = true
-objdiff-core.workspace = true
-image.workspace = true
-serde.workspace = true
-badge-maker = "0.3"
 axum.workspace = true
+badge-maker = "0.3"
 decomp-dev-core = { path = "../core" }
-tokio.workspace = true
+image.workspace = true
 mime.workspace = true
-streemap = "0.1"
+num-format = "0.4"
+objdiff-core.workspace = true
 palette = "0.7"
+resvg = "0.45"
+serde.workspace = true
+streemap = "0.1"
+tokio.workspace = true
+tracing.workspace = true
+

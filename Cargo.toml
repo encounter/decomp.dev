@@ -21,8 +21,8 @@ hex = "0.4"
 image = "0.25"
 maud = { version = "0.27", features = ["axum"] }
 mime = "0.3"
-objdiff-core = { version = "2.5", features = ["bindings"] }
-#objdiff-core = { path = "../objdiff/objdiff-core", features = ["bindings"] }
+objdiff-core = { git = "https://github.com/encounter/objdiff", rev = "0c48d711c7bd51f791b353d7d85ba948b277e2f2", features = ["bindings", "serde"] }
+#objdiff-core = { path = "../objdiff/objdiff-core", features = ["bindings", "serde"] }
 octocrab = { version = "0.44", features = ["stream"] }
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "zstd", "http2", "rustls-tls-native-roots"] }

@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponseParts, ResponseParts},
 };
 use decomp_dev_auth::CurrentUser;
-use decomp_dev_core::AppError;
+use decomp_dev_core::{AppError, util::size};
 use maud::{Markup, PreEscaped, Render, html};
 use objdiff_core::bindings::report::Measures;
 use regex::Regex;
@@ -120,12 +120,11 @@ impl TemplateContext {
             meta name="apple-mobile-web-app-title" content="decomp.dev";
             meta name="theme-color" content="#181c25" media="(prefers-color-scheme: dark)";
             meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)";
-            (self.chunks("entry", Load::Blocking).await)
-            link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96";
+            link rel="icon" type="image/png" href="/favicon.png" sizes="96x96";
             link rel="icon" type="image/svg+xml" href="/favicon.svg";
-            link rel="shortcut icon" href="/favicon.ico";
             link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180";
             link rel="manifest" href="/site.webmanifest";
+            (self.chunks("entry", Load::Blocking).await)
         }
     }
 
@@ -163,7 +162,7 @@ impl TemplateContext {
             Style,
             Font,
         }
-        let mut push = |kind: ResourceKind, path: &str, load: Load| {
+        let mut push = async |kind: ResourceKind, path: &str, load: Load| {
             match load {
                 Load::Preload => {
                     if self.added_resources.contains_key(path) {
@@ -202,14 +201,34 @@ impl TemplateContext {
                 ResourceKind::Script | ResourceKind::Style => self.nonce.as_deref(),
                 _ => None,
             };
+            let can_inline = path.starts_with('/')
+                && matches!(kind, ResourceKind::Script | ResourceKind::Style)
+                && tokio::fs::metadata(format!("dist{path}"))
+                    .await
+                    .is_ok_and(|m| m.is_file() && m.len() <= 2048);
             let rendered = match load {
-                Load::Preload => html! {
+                Load::Preload if !can_inline => html! {
                     link rel="preload" href=(path) as=(match kind {
                         ResourceKind::Script => "script",
                         ResourceKind::Style => "style",
                         ResourceKind::Font => "font",
                     }) crossorigin[crossorigin] nonce=[nonce];
                 },
+                Load::Preload => Markup::default(),
+                Load::Blocking | Load::Deferred if can_inline => {
+                    let content =
+                        tokio::fs::read_to_string(format!("dist{path}")).await.unwrap_or_default();
+                    let content = escape_script(&content);
+                    match kind {
+                        ResourceKind::Script => html! {
+                            script type=[(load == Load::Deferred).then_some("module")] nonce=[nonce] { (content) }
+                        },
+                        ResourceKind::Style => html! {
+                            style nonce=[nonce] { (content) }
+                        },
+                        ResourceKind::Font => Markup::default(),
+                    }
+                }
                 Load::Blocking | Load::Deferred => match kind {
                     ResourceKind::Script => html! {
                         script src=(path) defer[load == Load::Deferred] crossorigin[crossorigin] nonce=[nonce] {};
@@ -223,14 +242,14 @@ impl TemplateContext {
             out.push_str(&rendered.0);
         };
         for path in &entry.initial.js {
-            push(ResourceKind::Script, path, load);
+            push(ResourceKind::Script, path, load).await;
         }
         for path in &entry.initial.css {
-            push(ResourceKind::Style, path, load);
+            push(ResourceKind::Style, path, load).await;
         }
         for path in &entry.assets {
             if path.ends_with(".woff2") {
-                push(ResourceKind::Font, path, Load::Preload);
+                push(ResourceKind::Font, path, Load::Preload).await;
             }
         }
         PreEscaped(out)
@@ -268,6 +287,10 @@ impl TemplateContext {
                     }
                 }
             }
+            // Analytics
+            script src="https://umami.decomp.dev/script.js" defer crossorigin
+                nonce=[self.nonce.as_deref()]
+                data-website-id="80d6109f-52cc-42a9-98c9-9820dc8c4435" {};
         }
     }
 
@@ -378,7 +401,7 @@ impl Render for ProgressSections {
             };
             out.0.push_str(&rendered.0);
         }
-        if self.rendered.0.is_empty() {
+        if self.kind.is_empty() {
             return out;
         }
         html! {
@@ -402,19 +425,6 @@ pub fn nav_links() -> Markup {
             }
         }
     }
-}
-
-/// Format a size in bytes to a human-readable string.
-/// Uses SI (kilo = 1000) units, formatted to two decimal places.
-pub fn size(value: u64) -> String {
-    let units = ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
-    let mut value = value as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < units.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    format!("{:.2} {}", value, units[unit])
 }
 
 pub async fn get_robots() -> Result<String, AppError> {
@@ -445,7 +455,7 @@ pub async fn get_robots() -> Result<String, AppError> {
 }
 
 pub fn escape_script(text: &str) -> PreEscaped<Cow<str>> {
-    static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("<(?:!--|/?script)").unwrap());
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("<(?i:!--|/?script)").unwrap());
     PreEscaped(REGEX.replace_all(text, |caps: &regex::Captures| format!("\\x3C{}", &caps[0][1..])))
 }
 
@@ -455,8 +465,8 @@ mod test {
 
     #[test]
     fn test_escape_script() {
-        let input = r#"<!--<script>alert('test');</script>-->"#;
-        let expected = "\\x3C!--\\x3Cscript>alert('test');\\x3C/script>-->";
+        let input = r#"<!--<SCRIPT>alert('test');</ScRiPt>-->"#;
+        let expected = "\\x3C!--\\x3CSCRIPT>alert('test');\\x3C/ScRiPt>-->";
         assert_eq!(escape_script(input).0.as_ref(), expected);
     }
 }

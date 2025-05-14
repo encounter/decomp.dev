@@ -31,7 +31,7 @@ pub async fn manage(
         .await?
         .into_iter()
         .filter(|p| current_user.can_manage_repo(p.project.id))
-        .sorted_by(|a, b| a.project.name().cmp(&b.project.name()))
+        .sorted_by(|a, b| lexicmp::natural_lexical_cmp(&a.project.name(), &b.project.name()))
         .collect::<Vec<_>>();
 
     let rendered = html! {
@@ -49,7 +49,7 @@ pub async fn manage(
                     nav {
                         ul {
                             li {
-                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                                a href="/" { strong { "decomp.dev" } }
                             }
                             li {
                                 a href="/manage" { "Manage" }
@@ -116,6 +116,7 @@ async fn render_new(
         .map(|r| {
             (r.id, format!("{}/{}", r.owner, r.name), projects.iter().any(|p| p.project.id == r.id))
         })
+        .sorted_by(|a, b| lexicmp::lexical_cmp(&a.1, &b.1))
         .collect::<Vec<_>>();
 
     let current_name = prefill.as_ref().and_then(|p| p.name.as_deref()).unwrap_or("");
@@ -149,7 +150,7 @@ async fn render_new(
                     nav {
                         ul {
                             li {
-                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                                a href="/" { strong { "decomp.dev" } }
                             }
                             li {
                                 a href="/manage" { "Manage" }
@@ -366,7 +367,7 @@ async fn render_manage_project(
                     nav {
                         ul {
                             li {
-                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                                a href="/" { strong { "decomp.dev" } }
                             }
                             li {
                                 a href="/manage" { "Manage" }

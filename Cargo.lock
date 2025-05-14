@@ -288,7 +288,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "miniz_oxide",
- "object",
+ "object 0.36.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-demangle",
  "windows-targets 0.52.6",
 ]
@@ -772,6 +772,7 @@ dependencies = [
  "decomp-dev-core",
  "image",
  "mime",
+ "num-format",
  "objdiff-core",
  "palette",
  "resvg",
@@ -795,6 +796,7 @@ dependencies = [
  "decomp-dev-images",
  "image",
  "itertools 0.14.0",
+ "lexicmp",
  "libsystemd",
  "maud",
  "mime",
@@ -852,6 +854,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "deunicode"
+version = "1.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -887,6 +895,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -983,10 +1000,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35c0522e981e68cbfa8c3f978441a5f34b30b96e146b33cd3359176b50fe8586"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "libredox",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
+name = "flagset"
+version = "0.4.6"
+source = "git+https://github.com/enarx/flagset.git?rev=a1fe9369b3741e43fec45da1998e83b9d78966a2#a1fe9369b3741e43fec45da1998e83b9d78966a2"
 
 [[package]]
 name = "flate2"
@@ -1857,6 +1891,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03087c2bad5e1034e8cace5926dec053fb3790248370865f5117a7d0213354c8"
 
 [[package]]
+name = "lexicmp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e8f89da8fd95c4eb6274e914694bea90c7826523b26f2a2fd863d44b9d42c43"
+dependencies = [
+ "deunicode",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1877,6 +1920,17 @@ name = "libm"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
+
+[[package]]
+name = "libredox"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0ff37bd590ca25063e35af745c343cb7a0271906fb7b37e4813e8f79f00268d"
+dependencies = [
+ "bitflags 2.9.0",
+ "libc",
+ "redox_syscall",
+]
 
 [[package]]
 name = "libsqlite3-sys"
@@ -2211,6 +2265,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2253,18 +2317,26 @@ dependencies = [
 
 [[package]]
 name = "objdiff-core"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b114e70a6ede280511c1690609afbe802f84f7aaf27c71486c0510df07e647b8"
+version = "3.0.0-beta.7"
+source = "git+https://github.com/encounter/objdiff?rev=0c48d711c7bd51f791b353d7d85ba948b277e2f2#0c48d711c7bd51f791b353d7d85ba948b277e2f2"
 dependencies = [
  "anyhow",
- "object",
+ "encoding_rs",
+ "filetime",
+ "flagset",
+ "itertools 0.14.0",
+ "log",
+ "memmap2",
+ "num-traits",
+ "object 0.36.7 (git+https://github.com/gimli-rs/object?rev=a74579249e21ab8fcd3a86be588de336f18297cb)",
  "pbjson",
  "pbjson-build",
  "prost",
  "prost-build",
  "serde",
  "serde_json",
+ "similar",
+ "typed-path",
 ]
 
 [[package]]
@@ -2272,6 +2344,14 @@ name = "object"
 version = "0.36.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "object"
+version = "0.36.7"
+source = "git+https://github.com/gimli-rs/object?rev=a74579249e21ab8fcd3a86be588de336f18297cb#a74579249e21ab8fcd3a86be588de336f18297cb"
 dependencies = [
  "memchr",
 ]
@@ -3427,6 +3507,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "git+https://github.com/encounter/similar.git?branch=no_std#3568aba9173fad9f66740344dbdc6bc4c1970aab"
+dependencies = [
+ "hashbrown",
+]
+
+[[package]]
 name = "simple_asn1"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4350,6 +4438,12 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 dependencies = [
  "core_maths",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c462d18470a2857aa657d338af5fa67170bb48bcc80a296710ce3b0802a32566"
 
 [[package]]
 name = "typenum"

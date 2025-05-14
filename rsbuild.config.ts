@@ -1,6 +1,7 @@
 import { defineConfig } from '@rsbuild/core';
 import { pluginSass } from '@rsbuild/plugin-sass';
 import { pluginTypeCheck } from '@rsbuild/plugin-type-check';
+import { pluginReact } from '@rsbuild/plugin-react';
 
 export default defineConfig({
   source: {
@@ -10,6 +11,7 @@ export default defineConfig({
       history: ['./js/history.ts', './css/history.css'],
       manage: ['./js/manage.ts'],
       report: ['./js/treemap.ts'],
+      api: ['./js/api.tsx'],
     },
   },
   output: {
@@ -36,7 +38,7 @@ export default defineConfig({
       },
     },
   },
-  plugins: [pluginSass(), pluginTypeCheck()],
+  plugins: [pluginSass(), pluginTypeCheck(), pluginReact()],
   server: {
     port: 3001,
   },

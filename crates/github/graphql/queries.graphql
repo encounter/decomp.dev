@@ -3,10 +3,10 @@ query ViewerQuery($after: String) {
     login
     url
     repositories(
-      first: 100,
-      after: $after,
-      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
-      visibility: PUBLIC,
+      first: 100
+      after: $after
+      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+      visibility: PUBLIC
     ) {
       nodes {
         ...repositoryFields

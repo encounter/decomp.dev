@@ -11,7 +11,7 @@ use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
     models::{FullReportFile, ProjectInfo},
-    util::UrlExt,
+    util::{UrlExt, size},
 };
 use decomp_dev_images::{
     badge,
@@ -28,14 +28,18 @@ use url::Url;
 use super::{parse_accept, treemap};
 use crate::{
     AppState,
-    handlers::common::{Load, TemplateContext, escape_script, nav_links, size},
+    handlers::{
+        common::{Load, TemplateContext, escape_script, nav_links},
+        project::ProjectResponse,
+    },
     proto::{PROTOBUF, Protobuf},
 };
 
 #[derive(Deserialize)]
 pub struct ReportParams {
-    owner: String,
-    repo: String,
+    id: Option<String>,
+    owner: Option<String>,
+    repo: Option<String>,
     version: Option<String>,
     commit: Option<String>,
 }
@@ -47,7 +51,9 @@ const DEFAULT_IMAGE_HEIGHT: u32 = 475;
 #[serde(rename_all = "camelCase")]
 pub struct ReportQuery {
     mode: Option<String>,
+    version: Option<String>,
     category: Option<String>,
+    commit: Option<String>,
     w: Option<u32>,
     h: Option<u32>,
     #[serde(flatten)]
@@ -173,9 +179,23 @@ fn extract_extension(params: ReportParams) -> (ReportParams, Option<String>) {
                 );
             }
         }
-    } else if let Some((repo, ext)) = params.repo.rsplit_once('.') {
-        if is_valid_extension(ext) {
-            return (ReportParams { repo: repo.to_string(), ..params }, Some(ext.to_string()));
+    } else if let Some(repo) = params.repo.as_deref() {
+        if let Some((repo, ext)) = repo.rsplit_once('.') {
+            if is_valid_extension(ext) {
+                return (
+                    ReportParams { repo: Some(repo.to_string()), ..params },
+                    Some(ext.to_string()),
+                );
+            }
+        }
+    } else if let Some(id) = params.id.as_deref() {
+        if let Some((id, ext)) = id.rsplit_once('.') {
+            if is_valid_extension(ext) {
+                return (
+                    ReportParams { id: Some(id.to_string()), ..params },
+                    Some(ext.to_string()),
+                );
+            }
         }
     }
     (params, None)
@@ -196,43 +216,93 @@ pub async fn get_report(
         return Err(AppError::Status(StatusCode::NOT_ACCEPTABLE));
     }
 
-    let mut commit = params.commit.as_deref();
+    let mut commit = query.commit.as_deref().or(params.commit.as_deref());
     if matches!(commit, Some(c) if c.eq_ignore_ascii_case("latest")) {
         commit = None;
     }
-    let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, commit).await?
-    else {
+    let Some(project_info) = (match (&params.id, &params.owner, &params.repo) {
+        (Some(id), _, _) => {
+            let id: u64 = id.parse().map_err(|_| AppError::Status(StatusCode::BAD_REQUEST))?;
+            state.db.get_project_info_by_id(id, commit).await?
+        }
+        (_, Some(owner), Some(repo)) => state.db.get_project_info(owner, repo, commit).await?,
+        _ => return Err(AppError::Status(StatusCode::BAD_REQUEST)),
+    }) else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
     let Some(commit) = project_info.commit.as_ref() else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    let version = if let Some(version) = &params.version {
+    let version = if let Some(version) = query.version.as_deref().or(params.version.as_deref()) {
         if version.eq_ignore_ascii_case("default") {
             project_info.default_version().ok_or(AppError::Status(StatusCode::NOT_FOUND))?
         } else {
-            version.as_str()
+            version
         }
     } else if let Some(default_version) = project_info.default_version() {
         default_version
     } else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    let Some(report) =
-        state.db.get_report(&params.owner, &params.repo, &commit.sha, version).await?
+    let Some(report) = state
+        .db
+        .get_report(&project_info.project.owner, &project_info.project.repo, &commit.sha, version)
+        .await?
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
     let report = state.db.upgrade_report(&report).await?;
 
     let scope = apply_scope(&report, &project_info, &query)?;
-    match query.mode.as_deref().unwrap_or("report").to_ascii_lowercase().as_str() {
-        "shield" => mode_shield(&scope, query, &acceptable),
-        "report" => mode_report(&scope, &state, uri, query, ctx, &acceptable, current_user).await,
-        "measures" => mode_measures(&scope, &acceptable),
+    match query.mode.as_deref().unwrap_or("overview").to_ascii_lowercase().as_str() {
         "history" => mode_history(&scope, &state, uri, query, ctx, &acceptable, current_user).await,
+        "measures" => mode_measures(&scope, &acceptable),
+        "overview" => {
+            mode_overview(&scope, &state, uri, query, ctx, &acceptable, current_user).await
+        }
+        "report" => mode_report(&scope, &state, uri, query, ctx, &acceptable, current_user).await,
+        "shield" => mode_shield(&scope, query, &acceptable),
         _ => Err(AppError::Status(StatusCode::BAD_REQUEST)),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn mode_overview(
+    scope: &Scope<'_>,
+    state: &AppState,
+    uri: Uri,
+    query: ReportQuery,
+    ctx: TemplateContext,
+    acceptable: &[Mime],
+    current_user: Option<CurrentUser>,
+) -> Result<Response, AppError> {
+    for mime in acceptable {
+        if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
+            || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
+        {
+            return render_report(scope, state, uri, current_user, ctx).await;
+        } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
+            let result =
+                ProjectResponse::new(scope.project_info, scope.measures, &scope.report.report);
+            return Ok(Json(result).into_response());
+        } else if mime.type_() == mime::IMAGE && mime.subtype() == mime::SVG {
+            let (w, h) = query.size();
+            let svg = treemap::render_svg(&scope.units, w, h);
+            return Ok(([(header::CONTENT_TYPE, mime::IMAGE_SVG.as_ref())], svg).into_response());
+        } else if mime.type_() == mime::IMAGE {
+            let format = if mime.subtype() == mime::STAR {
+                // Default to PNG
+                ImageFormat::Png
+            } else {
+                ImageFormat::from_mime_type(mime.essence_str())
+                    .ok_or_else(|| AppError::Status(StatusCode::NOT_ACCEPTABLE))?
+            };
+            let (w, h) = query.size();
+            let data = treemap::render_image(&scope.units, w, h, format)?;
+            return Ok(([(header::CONTENT_TYPE, format.to_mime_type())], data).into_response());
+        }
+    }
+    Err(AppError::Status(StatusCode::NOT_ACCEPTABLE))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -327,6 +397,7 @@ fn mode_measures(
 struct ReportHistoryEntry {
     timestamp: String,
     commit_sha: String,
+    commit_message: Option<String>,
     measures: TemplateMeasures,
 }
 
@@ -373,6 +444,7 @@ async fn mode_history(
                 .format(&Rfc3339)
                 .unwrap_or_else(|_| "[invalid]".to_string()),
             commit_sha: report.commit.sha,
+            commit_message: report.commit.message,
             measures: TemplateMeasures::from(measures),
         });
     }
@@ -576,7 +648,9 @@ async fn render_report(
         "/{}/{}/{}/{}",
         project_info.project.owner, project_info.project.repo, report.version, report.commit.sha
     ));
-    let image_url = canonical_url.with_path(&format!("{}.png", canonical_url.path()));
+    let image_url = canonical_url
+        .with_path(&format!("{}.png", canonical_url.path()))
+        .query_param("mode", Some("report"));
 
     let versions = project_info
         .report_versions
@@ -671,6 +745,7 @@ async fn render_report(
                 (header)
                 (ctx.chunks("main", Load::Deferred).await)
                 (ctx.chunks("report", Load::Preload).await)
+                link rel="canonical" href=(canonical_url);
                 meta name="description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
@@ -682,10 +757,10 @@ async fn render_report(
                     nav {
                         ul {
                             li {
-                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                                a href="/" { strong { "decomp.dev" } }
                             }
                             li {
-                                a href="/" { "Projects" }
+                                a href="/projects" { "Projects" }
                             }
                             li {
                                 a href=(project_base_path) { (project_short_name) }
@@ -711,6 +786,12 @@ async fn render_report(
                         details class="dropdown" {
                             summary {}
                             ul dir="rtl" {
+                                li {
+                                    a href=(format!("/api?project={}", project_info.project.id)) {
+                                        "API "
+                                        span .icon-code { " " }
+                                    }
+                                }
                                 li {
                                     a href=(project_history_path) {
                                         "History "
@@ -865,7 +946,9 @@ async fn render_history(
         "/{}/{}/{}",
         project_info.project.owner, project_info.project.repo, report.version
     ));
-    let image_url = canonical_url.with_path(&format!("{}.png", canonical_url.path()));
+    let image_url = canonical_url
+        .with_path(&format!("{}.png", canonical_url.path()))
+        .query_param("mode", Some("report"));
 
     let versions = project_info
         .report_versions
@@ -929,6 +1012,7 @@ async fn render_history(
                 (header)
                 (ctx.chunks("main", Load::Deferred).await)
                 (ctx.chunks("history", Load::Preload).await)
+                link rel="canonical" href=(canonical_url);
                 meta name="description" content=(format!("Decompilation progress history for {project_name}"));
                 meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress history for {project_name}"));
@@ -940,10 +1024,10 @@ async fn render_history(
                     nav {
                         ul {
                             li {
-                                a href="https://decomp.dev" { strong { "decomp.dev" } }
+                                a href="/" { strong { "decomp.dev" } }
                             }
                             li {
-                                a href="/" { "Projects" }
+                                a href="/projects" { "Projects" }
                             }
                             li {
                                 a href=(project_base_path) { (project_short_name) }

@@ -77,7 +77,7 @@ pub async fn csp_middleware(mut req: Request, next: Next) -> Response {
             header.push(' ');
             header.push_str(domain);
         }
-        header.push_str(";connect-src 'self'");
+        header.push_str(";connect-src 'self' https://umami.decomp.dev");
         for domain in &extra_domains {
             header.push(' ');
             header.push_str(domain);

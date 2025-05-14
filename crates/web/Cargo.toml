@@ -13,6 +13,7 @@ decomp-dev-db = { path = "../db" }
 decomp-dev-github = { path = "../github" }
 decomp-dev-images = { path = "../images" }
 itertools = "0.14"
+lexicmp = "0.2"
 maud.workspace = true
 mime.workspace = true
 objdiff-core.workspace = true

@@ -239,6 +239,14 @@ async fn handle_workflow_run_completed(
         if !project_info.project.enable_pr_comments {
             return Ok(());
         }
+        // Actions pull_request builds always merge with the latest commit on the base branch.
+        // We can't use the base commit from the workflow run or pull request APIs, those are
+        // both lies. For simplicity, we'll just always compare against the latest commit that
+        // we have stored.
+        let Some(base_commit) = project_info.commit else {
+            tracing::warn!("No base commit found for repository ID {}", repository_id);
+            return Ok(());
+        };
         // Fetch any associated pull requests
         if pull_requests.is_empty() {
             let head = if let Some(head_owner) =
@@ -262,6 +270,22 @@ async fn handle_workflow_run_completed(
         }
         for pull_request in pull_requests {
             if pull_request.head.sha != workflow_run.head_sha {
+                tracing::warn!(
+                    "Pull request {} head SHA {} does not match workflow run head SHA {}",
+                    pull_request.id,
+                    pull_request.head.sha,
+                    workflow_run.head_sha
+                );
+                continue;
+            }
+            if repository.default_branch.as_ref().is_none_or(|b| pull_request.base.ref_field != *b)
+            {
+                tracing::warn!(
+                    "Pull request {} base branch {} does not match default branch {}",
+                    pull_request.id,
+                    pull_request.base.ref_field,
+                    repository.default_branch.as_deref().unwrap_or("[unknown]")
+                );
                 continue;
             }
             tracing::info!("Processing pull request {}", pull_request.id);
@@ -274,7 +298,7 @@ async fn handle_workflow_run_completed(
                     .get_report(
                         &project_info.project.owner,
                         &project_info.project.repo,
-                        &pull_request.base.sha,
+                        &base_commit.sha,
                         &artifact.version,
                     )
                     .await?

@@ -1,0 +1,21 @@
+.code-block {
+  position: relative;
+}
+
+.copy-button {
+  position: absolute;
+  top: 0.5em;
+  right: 0.5em;
+  padding: 0.5em;
+  vertical-align: bottom;
+}
+
+.clear-container {
+  display: flex;
+  gap: calc(var(--pico-spacing) * 0.5);
+  padding-top: calc(var(--pico-spacing) * 0.25);
+
+  input {
+    margin-bottom: 0;
+  }
+}

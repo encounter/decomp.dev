@@ -1,7 +1,14 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.8.0/schema.json",
   "files": {
-    "ignore": ["node_modules", "dist", "package.json", "package-lock.json"]
+    "ignore": [
+      ".sqlx",
+      "crates/github/graphql/schema.graphql",
+      "dist",
+      "node_modules",
+      "package-lock.json",
+      "package.json"
+    ]
   },
   "organizeImports": {
     "enabled": true
@@ -39,7 +46,7 @@
       },
       "style": {
         "noNonNullAssertion": "off"
-      }      
+      }
     }
   }
 }

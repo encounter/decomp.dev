@@ -69,7 +69,7 @@ $breakpoints: (
     // Forms
     "forms/basics": true,
     "forms/checkbox-radio-switch": true,
-    "forms/input-color": false,
+    "forms/input-color": true,
     "forms/input-date": false,
     "forms/input-file": false,
     "forms/input-range": false,
@@ -161,6 +161,9 @@ $breakpoints: (
 .icon-github-circled:before { content: '\e804'; }
 .icon-left-open:before { content: '\e805'; }
 .icon-right-open:before { content: '\e806'; }
+.icon-copy:before { content: '\e807'; }
+.icon-cancel:before { content: '\e808'; }
+.icon-code:before { content: '\e809'; }
 
 .icon-gc:before { content: '\ea00'; }
 .icon-wii:before { content: '\ea01'; }
