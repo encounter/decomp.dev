@@ -218,11 +218,14 @@ pub fn generate_comment(
     if measure_written {
         comment.push('\n');
     }
-    let mut total_changes = 0;
     let mut iter = changes.units.into_iter().flat_map(|mut unit| {
         let functions = core::mem::take(&mut unit.functions);
         functions.into_iter().map(move |f| (unit.clone(), f))
     });
+    let mut change_lines_up_to_100 = Vec::new();
+    let mut change_lines_down_from_100 = Vec::new();
+    let mut change_lines_up = Vec::new();
+    let mut change_lines_down = Vec::new();
     for (unit, item) in iter.by_ref() {
         let (from, to) = match (item.from, item.to) {
             (Some(from), Some(to)) => (from, to),
@@ -230,37 +233,70 @@ pub fn generate_comment(
             (Some(from), None) => (from, ChangeItemInfo::default()),
             (None, None) => continue,
         };
-        let emoji = if to.fuzzy_match_percent == 100.0 {
-            "✅"
-        } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
-            "📈"
-        } else {
-            "📉"
-        };
-        let from_bytes = ((from.fuzzy_match_percent as f64 / 100.0) * from.size as f64) as u64;
-        let to_bytes = ((to.fuzzy_match_percent as f64 / 100.0) * to.size as f64) as u64;
-        let bytes_diff = to_bytes as i64 - from_bytes as i64;
-        let bytes_str = match bytes_diff.cmp(&0) {
-            Ordering::Less => bytes_diff.to_string(),
-            Ordering::Equal => "0".to_string(),
-            Ordering::Greater => format!("+{}", bytes_diff),
-        };
         let name =
             item.metadata.as_ref().and_then(|m| m.demangled_name.as_deref()).unwrap_or(&item.name);
-        comment.push_str(&format!(
-            "{emoji} `{} | {}` {} bytes -> {:.2}%\n",
-            unit.name, name, bytes_str, to.fuzzy_match_percent
-        ));
-        total_changes += 1;
-        if total_changes >= 30 {
-            break;
+        let mut from_percent = from.fuzzy_match_percent;
+        if from_percent > 99.99 && from_percent < 100.00 {
+            from_percent = 99.99;
         }
+        let mut to_percent = to.fuzzy_match_percent;
+        if to_percent > 99.99 && to_percent < 100.00 {
+            to_percent = 99.99;
+        }
+        let change_line = format!(
+            "| `{}` | `{}` | {:.2}% | {:.2}% |\n",
+            unit.name, name, from_percent, to_percent
+        );
+        if to.fuzzy_match_percent == 100.0 {
+            change_lines_up_to_100.push(change_line);
+        } else if from.fuzzy_match_percent == 100.0 {
+            change_lines_down_from_100.push(change_line);
+        } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
+            change_lines_up.push(change_line);
+        } else {
+            change_lines_down.push(change_line);
+        };
     }
-    let remaining = iter.count();
-    if remaining > 0 {
-        comment.push_str(&format!("...and {} more items\n", remaining));
-    } else if total_changes == 0 {
-        comment.push_str("No changes\n");
+
+    let tables_to_print = [
+        ("✅", "newly matched functions", change_lines_up_to_100),
+        ("❌", "regressions in previously matched functions", change_lines_down_from_100),
+        ("📈", "improvements to unmatched functions", change_lines_up),
+        ("📉", "regressions in unmatched functions", change_lines_down),
+    ];
+    for (emoji, description, change_lines) in tables_to_print {
+        let total_changes = change_lines.len();
+        if total_changes == 0 {
+            comment.push_str(&format!("No {description}.\n"));
+            continue;
+        }
+        comment.push_str("<details>\n");
+        comment.push_str(&format!(
+            "<summary>{emoji} {} {description}:</summary>\n",
+            change_lines.len()
+        ));
+        comment.push('\n'); // Must include a blank line before a table
+        comment.push_str("| Unit | Function | Before | After |\n");
+        comment.push_str("| - | - | - | -- |\n");
+
+        let mut printed_changes = 0;
+        for change_line in change_lines {
+            comment.push_str(&change_line);
+            printed_changes += 1;
+            if printed_changes >= 30 {
+                break;
+            }
+        }
+        comment.push('\n');
+
+        let remaining = total_changes - printed_changes;
+        if remaining > 0 {
+            comment.push_str(&format!("...and {} more items\n", remaining));
+        } else if printed_changes == 0 {
+            comment.push_str("No changes\n");
+        }
+        comment.push_str("</details>\n");
+        comment.push('\n');
     }
     comment
 }
