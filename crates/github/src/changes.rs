@@ -246,6 +246,8 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
 
         if num_newly_matched == improvements.len() {
             out.push_str(&format!("{} newly matched\n", num_newly_matched));
+        } else if num_newly_matched == 0 {
+            out.push_str(&format!("{} improvements\n", improvements.len()));
         } else {
             out.push_str(&format!(
                 "{} improvements ({} newly matched)\n",
@@ -272,6 +274,8 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
 
         if num_broken_matches == regressions.len() {
             out.push_str(&format!("{} no longer matching\n", num_broken_matches));
+        } else if num_broken_matches == 0 {
+            out.push_str(&format!("{} regressions\n", regressions.len()));
         } else {
             out.push_str(&format!(
                 "{} regressions ({} no longer matching)\n",
