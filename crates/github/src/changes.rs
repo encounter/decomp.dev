@@ -162,6 +162,139 @@ fn measure_line_simple(name: &str, from: u64, to: u64) -> String {
     format!("**{name}**: {to} ({diff_str})\n")
 }
 
+const MAX_CHANGE_LINES: i32 = 30;
+
+#[derive(PartialEq, Eq)]
+enum ChangeKind {
+    NewMatch,
+    BrokenMatch,
+    Improvement,
+    Regression,
+}
+
+struct ChangeLine {
+    kind: ChangeKind,
+    unit_name: String,
+    item_name: String,
+    to_fuzzy_match_percent: f32,
+    bytes_diff: i64,
+}
+
+fn output_line(line: &ChangeLine, out: &mut String) {
+    let emoji = match line.kind {
+        ChangeKind::NewMatch => "✅",
+        ChangeKind::BrokenMatch => "💔",
+        ChangeKind::Improvement => "📈",
+        ChangeKind::Regression => "📉",
+    };
+
+    let bytes_str = match line.bytes_diff.cmp(&0) {
+        Ordering::Less => line.bytes_diff.to_string(),
+        Ordering::Equal => "0".to_string(),
+        Ordering::Greater => format!("+{}", line.bytes_diff),
+    };
+    out.push_str(&format!(
+        "{emoji} `{} | {}` {} bytes -> {:.2}%\n",
+        line.unit_name, line.item_name, bytes_str, line.to_fuzzy_match_percent
+    ));
+}
+
+fn truncate_num_displayed(shown_improvements: &mut usize, shown_regressions: &mut usize) {
+    loop {
+        let excess = (*shown_improvements + *shown_regressions) as i32 - MAX_CHANGE_LINES;
+        if excess <= 0 {
+            return;
+        }
+
+        let excess = excess as usize;
+
+        if shown_improvements == shown_regressions {
+            *shown_improvements -= excess / 2;
+            *shown_regressions -= excess / 2;
+            if excess % 2 != 0 {
+                *shown_regressions -= 1;
+            }
+            return;
+        }
+
+        if shown_improvements > shown_regressions {
+            *shown_improvements -= excess.min(*shown_improvements - *shown_regressions);
+        } else {
+            *shown_regressions -= excess.min(*shown_regressions - *shown_improvements);
+        }
+    }
+}
+
+fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
+    let (mut improvements, mut regressions): (Vec<_>, Vec<_>) =
+        changes.into_iter().partition(|item| {
+            item.kind == ChangeKind::NewMatch || item.kind == ChangeKind::Improvement
+        });
+    // first show new matches, then other improvements, each sorted by amount improved
+    improvements.sort_by_key(|item| (item.kind != ChangeKind::NewMatch, -item.bytes_diff));
+    // first show broken matches, then regressions, each sorted by amount regressed
+    regressions.sort_by_key(|item| (item.kind != ChangeKind::BrokenMatch, item.bytes_diff));
+
+    let mut shown_improvements = improvements.len();
+    let mut shown_regressions = regressions.len();
+
+    truncate_num_displayed(&mut shown_improvements, &mut shown_regressions);
+
+    if !improvements.is_empty() {
+        let num_newly_matched =
+            improvements.iter().filter(|item| item.kind == ChangeKind::NewMatch).count();
+
+        if num_newly_matched == improvements.len() {
+            out.push_str(&format!("{} newly matched\n", num_newly_matched));
+        } else if num_newly_matched == 0 {
+            out.push_str(&format!("{} improvements\n", improvements.len()));
+        } else {
+            out.push_str(&format!(
+                "{} improvements ({} newly matched)\n",
+                improvements.len(),
+                num_newly_matched
+            ));
+        }
+
+        for line in improvements.iter().take(shown_improvements) {
+            output_line(line, out);
+        }
+
+        if shown_improvements < improvements.len() {
+            out.push_str(&format!(
+                "...and {} more improvements\n\n",
+                improvements.len() - shown_improvements
+            ));
+        }
+    }
+
+    if !regressions.is_empty() {
+        let num_broken_matches =
+            regressions.iter().filter(|item| item.kind == ChangeKind::BrokenMatch).count();
+
+        if num_broken_matches == regressions.len() {
+            out.push_str(&format!("{} no longer matching\n", num_broken_matches));
+        } else if num_broken_matches == 0 {
+            out.push_str(&format!("{} regressions\n", regressions.len()));
+        } else {
+            out.push_str(&format!(
+                "{} regressions ({} no longer matching)\n",
+                regressions.len(),
+                num_broken_matches
+            ));
+        }
+
+        for line in regressions.iter().take(shown_regressions) {
+            output_line(line, out);
+        }
+
+        out.push_str(&format!(
+            "...and {} more regressions\n\n",
+            regressions.len() - shown_regressions
+        ));
+    }
+}
+
 pub fn generate_comment(
     from: &Report,
     to: &Report,
@@ -218,11 +351,13 @@ pub fn generate_comment(
     if measure_written {
         comment.push('\n');
     }
-    let mut total_changes = 0;
     let mut iter = changes.units.into_iter().flat_map(|mut unit| {
         let functions = core::mem::take(&mut unit.functions);
         functions.into_iter().map(move |f| (unit.clone(), f))
     });
+
+    let mut changes = vec![];
+
     for (unit, item) in iter.by_ref() {
         let (from, to) = match (item.from, item.to) {
             (Some(from), Some(to)) => (from, to),
@@ -230,36 +365,34 @@ pub fn generate_comment(
             (Some(from), None) => (from, ChangeItemInfo::default()),
             (None, None) => continue,
         };
-        let emoji = if to.fuzzy_match_percent == 100.0 {
-            "✅"
+        let kind = if to.fuzzy_match_percent == 100.0 {
+            ChangeKind::NewMatch
+        } else if from.fuzzy_match_percent == 100.0 {
+            ChangeKind::BrokenMatch
         } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
-            "📈"
+            ChangeKind::Improvement
         } else {
-            "📉"
+            ChangeKind::Regression
         };
         let from_bytes = ((from.fuzzy_match_percent as f64 / 100.0) * from.size as f64) as u64;
         let to_bytes = ((to.fuzzy_match_percent as f64 / 100.0) * to.size as f64) as u64;
         let bytes_diff = to_bytes as i64 - from_bytes as i64;
-        let bytes_str = match bytes_diff.cmp(&0) {
-            Ordering::Less => bytes_diff.to_string(),
-            Ordering::Equal => "0".to_string(),
-            Ordering::Greater => format!("+{}", bytes_diff),
-        };
         let name =
             item.metadata.as_ref().and_then(|m| m.demangled_name.as_deref()).unwrap_or(&item.name);
-        comment.push_str(&format!(
-            "{emoji} `{} | {}` {} bytes -> {:.2}%\n",
-            unit.name, name, bytes_str, to.fuzzy_match_percent
-        ));
-        total_changes += 1;
-        if total_changes >= 30 {
-            break;
-        }
+
+        let change = ChangeLine {
+            kind,
+            unit_name: unit.name.to_owned(),
+            item_name: name.to_owned(),
+            bytes_diff,
+            to_fuzzy_match_percent: to.fuzzy_match_percent,
+        };
+
+        changes.push(change);
     }
-    let remaining = iter.count();
-    if remaining > 0 {
-        comment.push_str(&format!("...and {} more items\n", remaining));
-    } else if total_changes == 0 {
+    if !changes.is_empty() {
+        generate_changes_list(changes, &mut comment);
+    } else {
         comment.push_str("No changes\n");
     }
     comment
