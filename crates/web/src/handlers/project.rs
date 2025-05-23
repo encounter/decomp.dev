@@ -318,8 +318,8 @@ async fn render_project(
                             li {
                                 a href="/projects" { "Projects" }
                             }
-                            li class="md" {
-                                details class="dropdown" {
+                            li.md {
+                                details.dropdown {
                                     summary { (current_sort.name) }
                                     ul {
                                         @for option in SORT_OPTIONS {
@@ -335,7 +335,7 @@ async fn render_project(
                         }
                         (nav_links())
                     }
-                    div class="title-group" {
+                    .title-group {
                         h3 { "Progress Reports" }
                         blockquote {
                             "Matching decompilation projects attempt to write source code (C, C++)"
@@ -348,7 +348,7 @@ async fn render_project(
                     }
                 }
                 main {
-                    details class="dropdown sm" {
+                    details.dropdown.sm {
                         summary { (current_sort.name) }
                         ul {
                             @for option in SORT_OPTIONS {
@@ -384,15 +384,25 @@ fn project_fragment(
     let project_path = canonical_url.with_path(&format!("/{}/{}", project.owner, project.repo));
     let commit_url =
         format!("https://github.com/{}/{}/commit/{}", project.owner, project.repo, commit.sha);
+    let header_image_id = project.header_image_id.map(hex::encode);
+    const HEADER_QUERY: &str = "?w=1024&h=256";
     html! {
-        article class="project" {
-            div class="project-header" {
-                h3 class="project-title" {
-                    a href=(project_path) { (project.name()) }
+        article.project {
+            a.project-link href=(project_path) aria-label="View project" {}
+            @if let Some(header_image_id) = header_image_id {
+                .project-image-container {
+                    picture {
+                        source srcset=(format!("/images/{header_image_id}.avif{HEADER_QUERY}")) type="image/avif";
+                        source srcset=(format!("/images/{header_image_id}.webp{HEADER_QUERY}")) type="image/webp";
+                        img.project-image src=(format!("/images/{header_image_id}.jpg{HEADER_QUERY}")) alt=(project.name()) loading="lazy";
+                    }
                 }
+            }
+            .project-header {
+                h3.project-title { (project.name()) }
                 @if let Some(platform) = &project.platform {
                     @let platform_name = Platform::from_str(platform).map(|p| p.name()).unwrap_or(platform);
-                    span class=(format!("platform-icon icon-{platform}")) title=(platform_name) {}
+                    span.platform-icon.(format!("icon-{platform}")) title=(platform_name) {}
                 }
             }
             h6 {
@@ -412,7 +422,7 @@ fn project_fragment(
                 }
             }
             (ctx.code_progress)
-            small class="muted" {
+            small.muted {
                 span title=(date(commit.timestamp)) { "Updated " (timeago(commit.timestamp)) }
                 " in commit "
                 a href=(commit_url) target="_blank" { (commit.sha[..7]) }

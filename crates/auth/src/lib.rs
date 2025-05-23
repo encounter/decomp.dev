@@ -7,7 +7,9 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use decomp_dev_core::{AppError, config::GitHubConfig};
-use decomp_dev_github::graphql::{CurrentUserResponse, RepositoryPermission, fetch_current_user};
+use decomp_dev_github::graphql::{
+    CurrentUserResponse, RepositoryPermission, fetch_current_user, fetch_simple_current_user,
+};
 use octocrab::{Octocrab, models::Author};
 use rand::{TryRngCore, rngs::OsRng};
 use time::{Duration, UtcDateTime};
@@ -46,6 +48,8 @@ pub type Profile = Author;
 pub struct CurrentUser {
     pub oauth: StoredOAuth,
     pub data: CurrentUserResponse,
+    #[serde(skip, default)]
+    pub super_admin: bool,
 }
 
 impl CurrentUser {
@@ -57,6 +61,9 @@ impl CurrentUser {
     }
 
     pub fn permissions_for_repo(&self, id: u64) -> RepositoryPermission {
+        if self.super_admin {
+            return RepositoryPermission::Admin;
+        }
         self.data
             .repositories
             .iter()
@@ -185,8 +192,17 @@ async fn fetch_access_token(config: &GitHubConfig, code: &str) -> Result<Current
     let oauth = StoredOAuth::from(oauth);
     let client = Octocrab::builder().oauth(oauth.clone().into()).build()?;
     let data = fetch_current_user(&client).await?;
-    tracing::info!("Logged in as @{} ({} repos)", data.login, data.repositories.len());
-    Ok(CurrentUser { oauth, data })
+    let super_admin = config.super_admin_ids.contains(&data.id);
+    if super_admin {
+        tracing::info!(
+            "Logged in as @{} [super admin] ({} repos)",
+            data.login,
+            data.repositories.len()
+        );
+    } else {
+        tracing::info!("Logged in as @{} ({} repos)", data.login, data.repositories.len());
+    }
+    Ok(CurrentUser { oauth, data, super_admin })
 }
 
 async fn refresh_access_token(
@@ -211,8 +227,9 @@ async fn refresh_access_token(
         )
         .await?;
     let oauth = StoredOAuth::from(oauth);
+    let super_admin = config.super_admin_ids.contains(&prev_auth.data.id);
     tracing::info!("Refreshed token for @{}", prev_auth.data.login);
-    Ok(CurrentUser { oauth, data: prev_auth.data.clone() })
+    Ok(CurrentUser { oauth, data: prev_auth.data.clone(), super_admin })
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -262,7 +279,7 @@ where
     ) -> Result<Option<Self>, Self::Rejection> {
         let session = Session::from_request_parts(parts, state).await?;
         let config = GitHubConfig::from_ref(state);
-        let user = match session.get::<CurrentUser>(CURRENT_USER).await {
+        let mut user = match session.get::<CurrentUser>(CURRENT_USER).await {
             Ok(Some(user)) => user,
             Ok(None) => return Ok(None),
             Err(e) => {
@@ -270,6 +287,35 @@ where
                 return Ok(None);
             }
         };
+        // Refresh user data if the ID is 0
+        if user.data.id == 0 {
+            match user.client() {
+                Ok(client) => match fetch_simple_current_user(&client).await {
+                    Ok(data) => {
+                        user.data =
+                            CurrentUserResponse { repositories: user.data.repositories, ..data };
+                        if let Err(e) = session.insert(CURRENT_USER, user.clone()).await {
+                            tracing::error!("Failed to insert user into session: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fetch user data: {}", e);
+                        if let Err(e) = session.remove_value(CURRENT_USER).await {
+                            tracing::error!("Failed to remove user from session: {}", e);
+                        }
+                        return Ok(None);
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("Failed to create GitHub client: {}", e);
+                    if let Err(e) = session.remove_value(CURRENT_USER).await {
+                        tracing::error!("Failed to remove user from session: {}", e);
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+        user.super_admin = config.super_admin_ids.contains(&user.data.id);
         if let Some(expires_at) = user.oauth.expires_at {
             if (UtcDateTime::now() + Duration::seconds(30)) > expires_at {
                 // Access token expired, attempt to refresh

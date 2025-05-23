@@ -13,8 +13,18 @@ type URI = String;
 )]
 pub struct ViewerQuery;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "graphql/schema.graphql",
+    query_path = "graphql/queries.graphql",
+    response_derives = "Debug, Clone"
+)]
+pub struct SimpleViewerQuery;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentUserResponse {
+    #[serde(default)]
+    pub id: u64,
     pub login: String,
     pub url: String,
     pub repositories: Vec<CurrentUserRepository>,
@@ -67,14 +77,19 @@ async fn run_query<T: GraphQLQuery>(
 }
 
 pub async fn fetch_current_user(client: &Octocrab) -> Result<CurrentUserResponse> {
-    let mut result =
-        CurrentUserResponse { login: String::new(), url: String::new(), repositories: Vec::new() };
+    let mut result = CurrentUserResponse {
+        id: 0,
+        login: String::new(),
+        url: String::new(),
+        repositories: Vec::new(),
+    };
     let mut after = None;
     loop {
         let data =
             run_query::<ViewerQuery>(client, viewer_query::Variables { after: after.clone() })
                 .await?
                 .viewer;
+        result.id = data.database_id.map(|x| x as u64).unwrap_or(u64::MAX);
         result.login = data.login;
         result.url = data.url;
         for repo in data.repositories.nodes.unwrap_or_default().into_iter().flatten() {
@@ -100,4 +115,15 @@ pub async fn fetch_current_user(client: &Octocrab) -> Result<CurrentUserResponse
         after = Some(end_cursor);
     }
     Ok(result)
+}
+
+pub async fn fetch_simple_current_user(client: &Octocrab) -> Result<CurrentUserResponse> {
+    let data =
+        run_query::<SimpleViewerQuery>(client, simple_viewer_query::Variables {}).await?.viewer;
+    Ok(CurrentUserResponse {
+        id: data.database_id.map(|x| x as u64).unwrap_or(u64::MAX),
+        login: data.login,
+        url: data.url,
+        repositories: Vec::new(),
+    })
 }

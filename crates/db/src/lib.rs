@@ -6,7 +6,7 @@ use decomp_dev_core::{
     config::DbConfig,
     models::{
         CachedReport, CachedReportFile, Commit, FrogressMapping, FullReport, FullReportFile,
-        Project, ProjectInfo, UnitKey,
+        ImageId, Project, ProjectInfo, UnitKey,
     },
 };
 use futures_util::TryStreamExt;
@@ -358,7 +358,7 @@ impl Database {
         let mut conn = self.pool.acquire().await?;
         let project = match sqlx::query!(
             r#"
-            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments
+            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id
             FROM projects
             WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE
             "#,
@@ -379,6 +379,7 @@ impl Database {
                 platform: row.platform,
                 workflow_id: row.workflow_id,
                 enable_pr_comments: row.enable_pr_comments,
+                header_image_id: row.header_image_id.and_then(|b| b.try_into().ok()),
             },
             None => return Ok(None),
         };
@@ -394,7 +395,7 @@ impl Database {
         let project_id_db = project_id as i64;
         let project = match sqlx::query!(
             r#"
-            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments
+            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id
             FROM projects
             WHERE id = ?
             "#,
@@ -414,6 +415,7 @@ impl Database {
                 platform: row.platform,
                 workflow_id: row.workflow_id,
                 enable_pr_comments: row.enable_pr_comments,
+                header_image_id: row.header_image_id.and_then(|b| b.try_into().ok()),
             },
             None => return Ok(None),
         };
@@ -547,6 +549,7 @@ impl Database {
                 platform,
                 workflow_id,
                 enable_pr_comments AS "enable_pr_comments!",
+                header_image_id,
                 git_commit,
                 git_commit_message,
                 MAX(timestamp) AS "timestamp: time::OffsetDateTime",
@@ -579,6 +582,7 @@ impl Database {
                 platform: row.platform,
                 workflow_id: row.workflow_id,
                 enable_pr_comments: row.enable_pr_comments,
+                header_image_id: row.header_image_id.and_then(|b| b.try_into().ok()),
             },
             commit: match (row.git_commit, row.timestamp) {
                 (Some(sha), Some(timestamp)) => Some(Commit {
@@ -956,10 +960,11 @@ impl Database {
     pub async fn update_project(&self, project: &Project) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
         let project_id = project.id as i64;
+        let header_image_id = project.header_image_id.as_ref().map(|b| b.as_slice());
         sqlx::query!(
             r#"
             UPDATE projects
-            SET owner = ?, repo = ?, name = ?, short_name = ?, default_category = ?, default_version = ?, platform = ?, workflow_id = ?, enable_pr_comments = ?, updated_at = CURRENT_TIMESTAMP
+            SET owner = ?, repo = ?, name = ?, short_name = ?, default_category = ?, default_version = ?, platform = ?, workflow_id = ?, enable_pr_comments = ?, header_image_id = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             "#,
             project.owner,
@@ -971,6 +976,7 @@ impl Database {
             project.platform,
             project.workflow_id,
             project.enable_pr_comments,
+            header_image_id,
             project_id,
         )
         .execute(&mut *conn)
@@ -999,6 +1005,91 @@ impl Database {
         )
         .execute(&mut *conn)
         .await?;
+        Ok(())
+    }
+
+    pub async fn create_image(
+        &self,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> Result<ImageId> {
+        let mut conn = self.pool.acquire().await?;
+        let key: ImageId = blake3::hash(data).into();
+        let key_db = &key[..];
+        sqlx::query!(
+            r#"
+            INSERT INTO images (id, mime_type, width, height, data, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO NOTHING
+            "#,
+            key_db,
+            mime_type,
+            width,
+            height,
+            data,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(key)
+    }
+
+    pub async fn get_image(&self, id: ImageId) -> Result<Option<(String, u32, u32, Vec<u8>)>> {
+        let mut conn = self.pool.acquire().await?;
+        let id_db = &id[..];
+        let row = sqlx::query!(
+            r#"
+            SELECT mime_type, width, height, data
+            FROM images
+            WHERE id = ?
+            "#,
+            id_db,
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        Ok(row.map(|row| (row.mime_type, row.width as u32, row.height as u32, row.data)))
+    }
+
+    pub async fn update_project_header(&self, project_id: u64, image_id: ImageId) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        let image_id = &image_id[..];
+        let project_id_db = project_id as i64;
+        sqlx::query!(
+            r#"
+            UPDATE projects
+            SET header_image_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+            image_id,
+            project_id_db,
+        )
+        .execute(&mut *conn)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn cleanup_images(&self) -> Result<()> {
+        let mut conn = self.pool.acquire().await?;
+        conn.execute("PRAGMA foreign_keys = OFF").await?;
+        let mut tx = conn.begin().await?;
+        let deleted_images = sqlx::query!(
+            r#"
+            DELETE FROM images
+            WHERE id NOT IN (
+                SELECT header_image_id FROM projects
+                WHERE header_image_id IS NOT NULL
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        tx.commit().await?;
+        conn.execute("PRAGMA foreign_keys = ON").await?;
+        if deleted_images > 0 {
+            tracing::info!("Deleted {} orphaned images", deleted_images);
+        }
         Ok(())
     }
 }

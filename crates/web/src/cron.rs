@@ -40,6 +40,7 @@ pub async fn create(
                 let state = state.clone();
                 Box::pin(async move {
                     state.db.cleanup_report_units().await.expect("Failed to clean up report units");
+                    state.db.cleanup_images().await.expect("Failed to clean up images");
                 })
             })?)
             .await?;

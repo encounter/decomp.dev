@@ -23,6 +23,8 @@ pub struct GitHubConfig {
     pub token: String,
     pub app: Option<GitHubAppConfig>,
     pub oauth: Option<GitHubOAuthConfig>,
+    #[serde(default)]
+    pub super_admin_ids: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -71,7 +71,7 @@ $breakpoints: (
     "forms/checkbox-radio-switch": true,
     "forms/input-color": true,
     "forms/input-date": false,
-    "forms/input-file": false,
+    "forms/input-file": true,
     "forms/input-range": false,
     "forms/input-search": false,
 
@@ -103,8 +103,9 @@ $breakpoints: (
 :root:not([data-theme=dark]) {
   --pico-code-kbd-color: #000;
   --pico-code-kbd-background-color: #fff;
-  --progress-background-color: #{$slate-100};
+  --progress-background-color: #{rgba($slate-100, 0.75)};
   --progress-stripe-color: rgba(0, 0, 0, 0.15);
+  --text-shadow: none;
 }
 
 @mixin pico-theme-dark {
@@ -113,8 +114,11 @@ $breakpoints: (
   --pico-dropdown-background-color: #1b1f29;
   --pico-code-kbd-color: #fff;
   --pico-code-kbd-background-color: #333;
-  --progress-background-color: #{$slate-800};
+  --progress-background-color: #{rgba($slate-800, 0.75)};
   --progress-stripe-color: rgba(255, 255, 255, 0.15);
+  --text-shadow: 0px 1px 2px var(--text-shadow-color, oklab(0% 0 0/.2)),
+    0px 3px 2px var(--text-shadow-color, oklab(0% 0 0/.2)),
+    0px 4px 8px var(--text-shadow-color, oklab(0% 0 0/.2));
 }
 
 [data-theme=dark] {
@@ -158,7 +162,7 @@ $breakpoints: (
 .icon-cog:before { content: '\e801'; }
 .icon-theme-light-dark:before { content: '\e802'; }
 .icon-chart-line:before { content: '\e803'; }
-.icon-github-circled:before { content: '\e804'; }
+.icon-github:before { content: '\e804'; }
 .icon-left-open:before { content: '\e805'; }
 .icon-right-open:before { content: '\e806'; }
 .icon-copy:before { content: '\e807'; }
@@ -234,6 +238,8 @@ $progress-height: 2rem;
   border-radius: var(--pico-border-radius);
   background-color: var(--progress-background-color);
   margin-bottom: var(--pico-spacing);
+  pointer-events: auto;
+  box-shadow: var(--pico-box-shadow);
 
   .progress-section.striped {
     background-image: linear-gradient(
@@ -319,6 +325,69 @@ $unit-size: 0.75rem;
   --tooltip-color: var(--pico-contrast-inverse);
 }
 
+.project {
+  position: relative;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: var(--pico-border-radius);
+  contain: content;
+  overflow: hidden;
+  transition: box-shadow var(--pico-transition);
+  text-shadow: var(--text-shadow);
+
+  a, [title] {
+    cursor: pointer;
+    pointer-events: auto;
+    user-select: none;
+  }
+
+  // Move the focus ring to the outer container, otherwise
+  // contain: content or overflow: hidden will clip it
+  &:has(> .project-link:focus) {
+    box-shadow: 0 0 0 var(--pico-outline-width) var(--pico-primary-focus);
+  }
+}
+
+.project-link {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+
+  // See above
+  &:focus {
+    box-shadow: none;
+  }
+}
+
+.project-image-container {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  contain: strict;
+}
+
+.project-image {
+  object-fit: cover;
+  width: 100%;
+  height: 100%;
+  opacity: 0.1;
+  transition: all .5s ease;
+  filter: blur(3px);
+  transform: scale(1);
+  will-change: transform;
+}
+
+.project {
+  &:hover, &:focus-within {
+    .project-image {
+      transform: scale(1.02);
+      opacity: 0.3;
+      filter: blur(0);
+    }
+  }
+}
+
 .project-header {
   display: flex;
   align-items: center;
@@ -328,10 +397,12 @@ $unit-size: 0.75rem;
   .project-title {
     flex: 1 1 auto;
     margin-bottom: 0;
+    text-wrap: balance;
   }
 
   .platform-icon {
     font-size: 1.5rem;
+    align-self: start;
   }
 }
 
@@ -349,6 +420,10 @@ $unit-size: 0.75rem;
 
 .title-group {
   margin-top: calc(var(--pico-block-spacing-vertical) * 2);
+}
+
+blockquote {
+  text-wrap: balance;
 }
 
 body > footer {
@@ -458,4 +533,9 @@ body > footer {
 
 details.dropdown {
   clear: right;
+}
+
+.repo-link {
+  float: right;
+  margin-inline-start: 1em;
 }

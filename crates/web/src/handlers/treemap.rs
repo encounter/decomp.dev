@@ -11,7 +11,7 @@ pub fn render_svg(units: &[ReportTemplateUnit], w: u32, h: u32) -> String {
         svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox=(format!("0 0 {w} {h}")) {
             style { ".unit { stroke: #000; stroke-width: 1; }" }
             @for unit in units {
-                rect class="unit"
+                rect.unit
                     width=(format!("{}%", unit.w * 100.0))
                     height=(format!("{}%", unit.h * 100.0))
                     x=(format!("{}%", unit.x * 100.0))

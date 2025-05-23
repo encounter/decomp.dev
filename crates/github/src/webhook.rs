@@ -314,7 +314,14 @@ async fn handle_workflow_run_completed(
                 let report_file = state.db.upgrade_report(&cached_report).await?;
                 let report = report_file.report.flatten();
                 let changes = generate_changes(&report, &artifact.report)?;
-                let comment_text = generate_comment(&report_file, artifact, &commit, changes);
+                let comment_text = generate_comment(
+                    &report,
+                    &artifact.report,
+                    Some(&report_file.version),
+                    Some(&report_file.commit),
+                    Some(&commit),
+                    changes,
+                );
                 let existing_comment = existing_comments
                     .items
                     .iter()

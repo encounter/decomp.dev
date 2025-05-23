@@ -259,29 +259,29 @@ impl TemplateContext {
         let elapsed = self.start.elapsed();
         html! {
             footer {
-                span class="section" {
-                    small class="muted" { "Generated in " (elapsed.as_millis()) "ms" }
+                span.section {
+                    small.muted { "Generated in " (elapsed.as_millis()) "ms" }
                     " | "
-                    small class="muted" {
+                    small.muted {
                         a href="https://github.com/encounter/decomp.dev" { "Code" }
                         " by "
                         a href="https://github.com/encounter" { "@encounter" }
                     }
                 }
                 @if let Some(user) = current_user {
-                    span class="section" {
-                        small class="muted" {
+                    span.section {
+                        small.muted {
                             "Logged in as "
                             a href=(user.data.url) { "@" (user.data.login) }
                         }
                         " | "
                         form action="/logout" method="post" {
-                            input type="submit" class="button outline secondary" value="Logout";
+                            input.button.outline.secondary type="submit" value="Logout";
                         }
                     }
                 } @else {
-                    span class="section" {
-                        small class="muted" {
+                    span.section {
+                        small.muted {
                             a href="/login" { "Login" }
                         }
                     }

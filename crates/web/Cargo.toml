@@ -3,15 +3,19 @@ name = "decomp-dev-web"
 version.workspace = true
 edition.workspace = true
 publish = false
+default-run = "decomp-dev-web"
 
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+axum_typed_multipart = "0.16"
 decomp-dev-auth = { path = "../auth" }
 decomp-dev-core = { path = "../core" }
 decomp-dev-db = { path = "../db" }
 decomp-dev-github = { path = "../github" }
 decomp-dev-images = { path = "../images" }
+hex.workspace = true
+image.workspace = true
 itertools = "0.14"
 lexicmp = "0.2"
 maud.workspace = true
@@ -34,9 +38,6 @@ tower-sessions.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
-
-# image
-image.workspace = true
 
 # proto
 bytes = "1.7"

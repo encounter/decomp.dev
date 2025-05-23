@@ -1,3 +1,5 @@
+use std::io::Cursor;
+
 use anyhow::Result;
 use axum::{
     Form,
@@ -5,6 +7,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
+use axum_typed_multipart::{TryFromMultipart, TypedMultipart};
+use bytes::Bytes;
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError,
@@ -382,7 +386,7 @@ async fn render_manage_project(
                 main {
                     h3 { "Edit " (project_short_name) }
                     (render_message(&message))
-                    form method="post" data-loading="Saving..." {
+                    form method="post" enctype="multipart/form-data" data-loading="Saving..." {
                         fieldset {
                             label {
                                 "Repository"
@@ -408,11 +412,8 @@ async fn render_manage_project(
                                 "Default version"
                                 select name="default_version" {
                                     @for version in &project_info.report_versions {
-                                        @if default_version == Some(version.as_str()) {
-                                            option value=(version) selected { (version) }
-                                        } @else {
-                                            option value=(version) { (version) }
-                                        }
+                                        @let selected = default_version == Some(version.as_str());
+                                        option value=(version) selected[selected] { (version) }
                                     }
                                 }
                             }
@@ -422,21 +423,32 @@ async fn render_manage_project(
                                 small { "The GitHub Actions workflow that contains report artifacts." }
                             }
                             label {
-                                @if installation_id.is_some() {
-                                    @if project_info.project.enable_pr_comments {
-                                        input name="enable_pr_comments" type="checkbox" role="switch" checked;
-                                    } @else {
-                                        input name="enable_pr_comments" type="checkbox" role="switch";
-                                    }
-                                    "Enable PR comments"
-                                } @else {
-                                    @if project_info.project.enable_pr_comments {
-                                        input name="enable_pr_comments" type="checkbox" role="switch" disabled checked;
-                                    } @else {
-                                        input name="enable_pr_comments" type="checkbox" role="switch" disabled;
-                                    }
-                                    "Enable PR comments (requires GitHub App installation)"
+                                input name="enable_pr_comments" type="checkbox" role="switch"
+                                    disabled[installation_id.is_none()]
+                                    checked[project_info.project.enable_pr_comments];
+                                "Enable PR comments"
+                                @if installation_id.is_none() {
+                                    " (requires GitHub App installation)"
                                 }
+                            }
+                            hr;
+                            label {
+                                "Hero image "
+                                small { "(optional)" }
+                                input name="header_image" type="file" accept="image/*";
+                                small {
+                                    "Image should be at least 1024×256. A common size is 1920×620."
+                                    br;
+                                    "Upload the best quality/resolution available; the image will be resized to fit."
+                                    br;
+                                    a href="https://www.steamgriddb.com/heroes" target="_blank" { "SteamGridDB" }
+                                    " has a large collection of images."
+                                }
+                            }
+                            label {
+                                input name="clear_header_image" type="checkbox" role="switch"
+                                    disabled[project_info.project.header_image_id.is_none()];
+                                "Clear the current hero image"
                             }
                         }
                         button type="submit" { "Save" }
@@ -467,24 +479,16 @@ async fn render_manage_project(
     Ok((ctx, rendered).into_response())
 }
 
-fn form_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where D: serde::Deserializer<'de> {
-    match <&str>::deserialize(deserializer)? {
-        "on" => Ok(true),
-        "off" => Ok(false),
-        other => Err(serde::de::Error::unknown_variant(other, &["on", "off"])),
-    }
-}
-
-#[derive(Deserialize)]
+#[derive(Debug, TryFromMultipart)]
 pub struct ProjectForm {
     pub name: String,
     pub short_name: String,
     pub platform: String,
     pub default_version: Option<String>,
     pub workflow_id: String,
-    #[serde(default, deserialize_with = "form_bool")]
-    pub enable_pr_comments: bool,
+    pub enable_pr_comments: Option<String>,
+    pub header_image: Option<Bytes>,
+    pub clear_header_image: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -497,7 +501,7 @@ pub async fn manage_project_save(
     Path(params): Path<ProjectParams>,
     State(state): State<AppState>,
     current_user: CurrentUser,
-    Form(form): Form<ProjectForm>,
+    TypedMultipart(form): TypedMultipart<ProjectForm>,
 ) -> Result<Response, AppError> {
     let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
     else {
@@ -506,6 +510,22 @@ pub async fn manage_project_save(
     if !current_user.can_manage_repo(project_info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
+    if !ALL_PLATFORMS.iter().any(|p| p.to_str() == form.platform) {
+        return Err(AppError::Status(StatusCode::BAD_REQUEST));
+    };
+
+    let mut header_image_id = project_info.project.header_image_id;
+    if let Some(header_image) = form.header_image.filter(|b| !b.is_empty()) {
+        let format = image::guess_format(&header_image)?;
+        let (width, height) =
+            image::ImageReader::with_format(Cursor::new(&header_image[..]), format)
+                .into_dimensions()?;
+        let id = state.db.create_image(format.to_mime_type(), width, height, &header_image).await?;
+        header_image_id = Some(id);
+    } else if form.clear_header_image.is_some_and(|v| v == "on") {
+        header_image_id = None;
+    }
+
     let installation_id = if let Some(installations) = &state.github.installations {
         let installations = installations.lock().await;
         installations.repo_to_installation.get(&project_info.project.id).cloned()
@@ -528,10 +548,11 @@ pub async fn manage_project_save(
         workflow_id: (!workflow_id.is_empty()).then_some(workflow_id.to_string()),
         // If there's no installation ID, use the existing value
         enable_pr_comments: if installation_id.is_some() {
-            form.enable_pr_comments
+            form.enable_pr_comments.is_some_and(|v| v == "on")
         } else {
             project_info.project.enable_pr_comments
         },
+        header_image_id,
     };
     state.db.update_project(&project).await?;
     let redirect_url = format!("/{}/{}", params.owner, params.repo);

@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use axum::{
     Router,
-    extract::Request,
+    extract::{DefaultBodyLimit, Request},
     http::{HeaderMap, HeaderValue, header, header::Entry},
     response::Response,
     routing::{get, post},
@@ -18,6 +18,7 @@ mod api;
 mod auth;
 mod common;
 pub mod csp;
+mod images;
 mod manage;
 mod project;
 mod report;
@@ -62,13 +63,18 @@ pub fn build_router() -> Router<AppState> {
         .route("/manage/new", get(manage::new))
         .route("/manage/new", post(manage::new_save))
         .route("/manage/{owner}/{repo}", get(manage::manage_project))
-        .route("/manage/{owner}/{repo}", post(manage::manage_project_save))
+        .route(
+            "/manage/{owner}/{repo}",
+            post(manage::manage_project_save)
+                .layer(DefaultBodyLimit::max(50 * 1000 * 1000 /* 50MB */)),
+        )
         .route("/manage/{owner}/{repo}/refresh", post(manage::manage_project_refresh))
         .route("/og.png", get(decomp_dev_images::get_og))
         .route("/", get(project::get_projects))
         .route("/projects", get(project::get_projects))
         .route("/projects.json", get(project::get_projects))
         .route("/projects/{id}", get(report::get_report))
+        .route("/images/{id}", get(images::get_image))
         .route("/{owner}/{repo}", get(report::get_report))
         .route("/{owner}/{repo}/{version}", get(report::get_report))
         .route("/{owner}/{repo}/{version}/{commit}", get(report::get_report))

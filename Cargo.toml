@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/auth",
+    "crates/cli",
     "crates/core",
     "crates/db",
     "crates/github",
@@ -35,4 +36,18 @@ tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
 
 [profile.dev.package.sqlx-macros]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.webp]
+opt-level = 3
+[profile.dev.package.image-webp]
+opt-level = 3
+[profile.dev.package.rgb]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.zune-core]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
 opt-level = 3

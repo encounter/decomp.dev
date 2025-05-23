@@ -1,64 +1,63 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT id AS \"id!\", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments\n            FROM projects\n            WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE\n            ",
+  "query": "\n            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id\n            FROM projects\n            WHERE id = ?\n            ",
   "describe": {
     "columns": [
       {
-        "name": "id!",
-        "ordinal": 0,
-        "type_info": "Integer"
-      },
-      {
         "name": "owner",
-        "ordinal": 1,
+        "ordinal": 0,
         "type_info": "Text"
       },
       {
         "name": "repo",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text"
       },
       {
         "name": "name",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Text"
       },
       {
         "name": "short_name",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Text"
       },
       {
         "name": "default_category",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text"
       },
       {
         "name": "default_version",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Text"
       },
       {
         "name": "platform",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Text"
       },
       {
         "name": "workflow_id",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Text"
       },
       {
         "name": "enable_pr_comments",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Bool"
+      },
+      {
+        "name": "header_image_id",
+        "ordinal": 9,
+        "type_info": "Blob"
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
-      true,
       false,
       false,
       true,
@@ -67,8 +66,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "ef595aa7d32d7d21d9721a794295a7d10d0edc60d25c1809bb94935e468873fd"
+  "hash": "36261e887badca80fc0c19ac0a368951387da8f8a42623be91ca2d251c745364"
 }

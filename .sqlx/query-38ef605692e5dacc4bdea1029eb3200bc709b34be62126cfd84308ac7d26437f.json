@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM images\n            WHERE id NOT IN (\n                SELECT header_image_id FROM projects\n                WHERE header_image_id IS NOT NULL\n            )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "38ef605692e5dacc4bdea1029eb3200bc709b34be62126cfd84308ac7d26437f"
+}

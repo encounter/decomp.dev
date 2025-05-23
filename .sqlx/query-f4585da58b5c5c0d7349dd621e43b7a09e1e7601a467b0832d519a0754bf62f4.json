@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT mime_type, width, height, data\n            FROM images\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "mime_type",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "width",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "height",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "data",
+        "ordinal": 3,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f4585da58b5c5c0d7349dd621e43b7a09e1e7601a467b0832d519a0754bf62f4"
+}

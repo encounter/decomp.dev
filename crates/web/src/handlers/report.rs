@@ -644,10 +644,27 @@ async fn render_report(
         format!("/manage/{}/{}", project_info.project.owner, project_info.project.repo);
     let can_manage =
         current_user.as_ref().is_some_and(|u| u.can_manage_repo(project_info.project.id));
-    let canonical_url = request_url.with_path(&format!(
-        "/{}/{}/{}/{}",
-        project_info.project.owner, project_info.project.repo, report.version, report.commit.sha
-    ));
+
+    let is_default_version = project_info.default_version() == Some(report.version.as_str());
+    let is_latest_commit = project_info.next_commit.is_none();
+    let canonical_url = if is_default_version && is_latest_commit {
+        request_url
+            .with_path(&format!("/{}/{}", project_info.project.owner, project_info.project.repo))
+    } else if is_latest_commit {
+        request_url.with_path(&format!(
+            "/{}/{}/{}",
+            project_info.project.owner, project_info.project.repo, report.version
+        ))
+    } else {
+        request_url.with_path(&format!(
+            "/{}/{}/{}/{}",
+            project_info.project.owner,
+            project_info.project.repo,
+            report.version,
+            report.commit.sha
+        ))
+    };
+
     let image_url = canonical_url
         .with_path(&format!("{}.png", canonical_url.path()))
         .query_param("mode", Some("report"));
@@ -656,10 +673,20 @@ async fn render_report(
         .report_versions
         .iter()
         .map(|version| {
-            let version_url = request_url.with_path(&format!(
-                "/{}/{}/{}/{}",
-                project_info.project.owner, project_info.project.repo, version, report.commit.sha
-            ));
+            let version_url = if is_latest_commit {
+                request_url.with_path(&format!(
+                    "/{}/{}/{}",
+                    project_info.project.owner, project_info.project.repo, version
+                ))
+            } else {
+                request_url.with_path(&format!(
+                    "/{}/{}/{}/{}",
+                    project_info.project.owner,
+                    project_info.project.repo,
+                    version,
+                    report.commit.sha
+                ))
+            };
             ReportTemplateVersion { id: version, path: version_url.path_and_query().to_string() }
         })
         .collect::<Vec<_>>();
@@ -746,11 +773,21 @@ async fn render_report(
                 (ctx.chunks("main", Load::Deferred).await)
                 (ctx.chunks("report", Load::Preload).await)
                 link rel="canonical" href=(canonical_url);
+                @if let Some(prev_commit_path) = prev_commit_path.as_deref() {
+                    link rel="prev" href=(prev_commit_path);
+                }
+                @if let Some(next_commit_path) = next_commit_path.as_deref() {
+                    link rel="next" href=(next_commit_path);
+                }
                 meta name="description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
+                @if !is_latest_commit || !is_default_version {
+                    // Prevent search engines from indexing anything but the primary report
+                    meta name="robots" content="noindex";
+                }
             }
             body {
                 header {
@@ -765,8 +802,8 @@ async fn render_report(
                             li {
                                 a href=(project_base_path) { (project_short_name) }
                             }
-                            li class="md" {
-                                details class="dropdown" {
+                            li.md {
+                                details.dropdown {
                                     summary { (report.version) }
                                     ul {
                                         @for version in &versions {
@@ -783,42 +820,47 @@ async fn render_report(
                 }
                 main {
                     .actions {
-                        details class="dropdown" {
+                        details.dropdown {
                             summary {}
                             ul dir="rtl" {
                                 li {
                                     a href=(format!("/api?project={}", project_info.project.id)) {
                                         "API "
-                                        span .icon-code { " " }
+                                        span.icon-code { " " }
                                     }
                                 }
                                 li {
                                     a href=(project_history_path) {
                                         "History "
-                                        span .icon-chart-line { " " }
+                                        span.icon-chart-line { " " }
                                     }
                                 }
                                 @if can_manage {
                                     li {
                                         a href=(project_manage_path) {
                                             "Manage "
-                                            span .icon-cog { " " }
+                                            span.icon-cog { " " }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    h3 { (format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent)) }
+                    a.secondary.outline.repo-link role="button"
+                        href=(project_info.project.repo_url()) target="_blank" {
+                        span.icon-github { " " }
+                        span.md { "Repository" }
+                    }
+                    h3.report-title { (format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent)) }
                     @if current_unit.is_none() && measures.complete_code_percent > 0.0 {
-                        h4 class="muted" { (format!("{:.2}% fully linked", measures.complete_code_percent)) }
+                        h4.muted { (format!("{:.2}% fully linked", measures.complete_code_percent)) }
                     }
                     @if let Some(source_file_url) = source_file_url {
-                        h4 class="muted" {
+                        h4.muted {
                             a href=(source_file_url) target="_blank" { "View source file" }
                         }
                     }
-                    details class="dropdown sm" {
+                    details.dropdown.sm {
                         summary { (report.version) }
                         ul {
                             @for version in &versions {
@@ -829,20 +871,20 @@ async fn render_report(
                         }
                     }
                     @if measures.total_code > 0 {
-                        h6 class="report-header" {
+                        h6 {
                             "Code "
-                            small class="muted" { "(" (size(measures.total_code)) ")" }
+                            small.muted { "(" (size(measures.total_code)) ")" }
                         }
                         (ctx.code_progress_sections(&measures))
                     }
                     @if measures.total_data > 0 {
-                        h6 class="report-header" {
+                        h6 {
                             "Data "
-                            small class="muted" { "(" (size(measures.total_data)) ")" }
+                            small.muted { "(" (size(measures.total_data)) ")" }
                         }
                         (ctx.data_progress_sections(&measures))
                     }
-                    h6 class="report-header" { "Commit" }
+                    h6 { "Commit" }
                     div {
                         @if let Some(message) = commit_message {
                             pre {
@@ -855,47 +897,47 @@ async fn render_report(
                         }
                         div role="group" {
                             @if let Some(prev_commit_path) = prev_commit_path {
-                                a role="button" class="outline secondary" href=(prev_commit_path) {
+                                a.outline.secondary role="button" href=(prev_commit_path) {
                                     span .icon-left-open .md {}
                                     " Previous"
                                 }
                             } @else {
-                                button disabled class="outline secondary" {
+                                button.outline.secondary disabled {
                                     span .icon-left-open .md {}
                                     " Previous"
                                 }
                             }
                             @if let Some(next_commit_path) = next_commit_path {
-                                a role="button" class="outline secondary" href=(next_commit_path) {
+                                a.outline.secondary role="button" href=(next_commit_path) {
                                     "Next "
                                     span .icon-right-open .md {}
                                 }
                             } @else {
-                                button disabled class="outline secondary" {
+                                button.outline.secondary disabled {
                                     "Next "
                                     span .icon-right-open .md {}
                                 }
                             }
                             @if let Some(latest_commit_path) = latest_commit_path {
-                                a role="button" class="primary" href=(latest_commit_path) {
+                                a.primary role="button" href=(latest_commit_path) {
                                     "Latest"
                                 }
                             } @else {
-                                button disabled class="primary" {
+                                button.primary disabled {
                                     "Latest"
                                 }
                             }
                         }
                     }
                     @if current_unit.is_some() {
-                        h6 class="report-header" { "Functions" }
+                        h6 { "Functions" }
                         div role="group" {
                             a role="button" href=(units_path) { "Back to units" }
                         }
                     } @else {
-                        h6 class="report-header" { "Units" }
+                        h6 { "Units" }
                         @if categories.len() > 1 {
-                            details class="dropdown" {
+                            details.dropdown {
                                 summary { (current_category.name) }
                                 ul {
                                     @for category in &categories {
@@ -1041,7 +1083,7 @@ async fn render_history(
                 }
                 main {
                     h3 { "History for " (project_short_name_with_label) }
-                    details class="dropdown" title="Version" {
+                    details.dropdown title="Version" {
                         summary { (report.version) }
                         ul {
                             @for version in &versions {
@@ -1052,7 +1094,7 @@ async fn render_history(
                         }
                     }
                     @if current_unit.is_none() && categories.len() > 1 {
-                        details class="dropdown" title="Category" {
+                        details.dropdown title="Category" {
                             summary { (current_category.name) }
                             ul {
                                 @for category in &categories {

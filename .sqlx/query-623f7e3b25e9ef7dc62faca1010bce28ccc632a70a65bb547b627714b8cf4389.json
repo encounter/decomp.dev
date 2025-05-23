@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM reports\n            WHERE project_id NOT IN (SELECT id FROM projects)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "623f7e3b25e9ef7dc62faca1010bce28ccc632a70a65bb547b627714b8cf4389"
+}

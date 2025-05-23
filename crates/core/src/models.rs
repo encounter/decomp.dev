@@ -4,6 +4,9 @@ use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUni
 use serde::Serialize;
 use time::UtcDateTime;
 
+// BLAKE3 hash of the image data
+pub type ImageId = [u8; 32];
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Project {
     pub id: u64,
@@ -16,6 +19,7 @@ pub struct Project {
     pub platform: Option<String>,
     pub workflow_id: Option<String>,
     pub enable_pr_comments: bool,
+    pub header_image_id: Option<ImageId>,
 }
 
 impl Default for Project {
@@ -31,6 +35,7 @@ impl Default for Project {
             platform: None,
             workflow_id: None,
             enable_pr_comments: true,
+            header_image_id: None,
         }
     }
 }

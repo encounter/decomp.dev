@@ -1,0 +1,5 @@
+# Force rust-analyzer to use prepared sqlx data
+# sqlx within a workspace crate doesn't resolve the db path
+# https://github.com/launchbadge/sqlx/issues/3099
+[env]
+SQLX_OFFLINE = "true"

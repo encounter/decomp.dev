@@ -1,22 +1,17 @@
 [package]
-name = "decomp-dev-images"
+name = "decomp-dev-cli"
 version.workspace = true
 edition.workspace = true
 publish = false
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
-badge-maker = "0.3"
+argp = "0.4"
 decomp-dev-core = { path = "../core" }
-image.workspace = true
-mime.workspace = true
-num-format = "0.4"
+decomp-dev-github = { path = "../github" }
 objdiff-core.workspace = true
-palette = "0.7"
-resvg = "0.45"
 serde.workspace = true
-streemap = "0.1"
-tokio.workspace = true
+serde_json.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing.workspace = true
-webp = "0.3"
+typed-path = "0.11"

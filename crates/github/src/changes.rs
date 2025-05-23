@@ -1,12 +1,10 @@
 use std::cmp::Ordering;
 
 use anyhow::Result;
-use decomp_dev_core::models::{Commit, FullReportFile};
+use decomp_dev_core::models::Commit;
 use objdiff_core::bindings::report::{
     ChangeItem, ChangeItemInfo, ChangeUnit, Changes, Report, ReportItem, ReportUnit,
 };
-
-use crate::ProcessArtifactResult;
 
 pub fn generate_changes(previous: &Report, current: &Report) -> Result<Changes> {
     let mut changes = Changes { from: previous.measures, to: current.measures, units: vec![] };
@@ -165,20 +163,22 @@ fn measure_line_simple(name: &str, from: u64, to: u64) -> String {
 }
 
 pub fn generate_comment(
-    from: &FullReportFile,
-    to: &ProcessArtifactResult,
-    to_commit: &Commit,
+    from: &Report,
+    to: &Report,
+    version: Option<&str>,
+    from_commit: Option<&Commit>,
+    to_commit: Option<&Commit>,
     changes: Changes,
 ) -> String {
     let mut comment = format!(
         "### Report for {} ({} - {})\n\n",
-        to.version,
-        &from.commit.sha[..7],
-        &to_commit.sha[..7]
+        version.unwrap_or("unknown"),
+        from_commit.map_or("<none>", |c| &c.sha[..7]),
+        to_commit.map_or("<none>", |c| &c.sha[..7])
     );
     let mut measure_written = false;
-    let from_measures = from.report.measures;
-    let to_measures = to.report.measures.unwrap_or_default();
+    let from_measures = from.measures.unwrap_or_default();
+    let to_measures = to.measures.unwrap_or_default();
     if from_measures.total_code != to_measures.total_code {
         comment.push_str(&measure_line_bytes(
             "Total code",

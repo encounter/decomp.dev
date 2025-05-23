@@ -1,5 +1,6 @@
 query ViewerQuery($after: String) {
   viewer {
+    databaseId
     login
     url
     repositories(
@@ -16,6 +17,14 @@ query ViewerQuery($after: String) {
         hasNextPage
       }
     }
+  }
+}
+
+query SimpleViewerQuery {
+  viewer {
+    databaseId
+    login
+    url
   }
 }
 
