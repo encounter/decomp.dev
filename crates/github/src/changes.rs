@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::BTreeMap};
 
 use anyhow::Result;
 use decomp_dev_core::models::Commit;
@@ -162,6 +162,101 @@ fn measure_line_simple(name: &str, from: u64, to: u64) -> String {
     format!("**{name}**: {to} ({diff_str})\n")
 }
 
+const MAX_CHANGE_LINES: usize = 30;
+
+// Note: The order the tables are printed in is determined by the order of the variants in this enum.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+enum ChangeKind {
+    NewMatch,
+    BrokenMatch,
+    Improvement,
+    Regression,
+}
+
+struct ChangeLine {
+    kind: ChangeKind,
+    unit_name: String,
+    item_name: String,
+    from_fuzzy_match_percent: f32,
+    to_fuzzy_match_percent: f32,
+    bytes_diff: i64,
+}
+
+fn output_line(line: &ChangeLine, out: &mut String) {
+    let bytes_str = match line.bytes_diff.cmp(&0) {
+        Ordering::Less => line.bytes_diff.to_string(),
+        Ordering::Equal => "0".to_string(),
+        Ordering::Greater => format!("+{}", line.bytes_diff),
+    };
+
+    // Avoid showing 100% for nearly-matched functions due to rounding.
+    let mut from_percent = line.from_fuzzy_match_percent;
+    if from_percent > 99.99 && from_percent < 100.00 {
+        from_percent = 99.99;
+    }
+    let mut to_percent = line.to_fuzzy_match_percent;
+    if to_percent > 99.99 && to_percent < 100.00 {
+        to_percent = 99.99;
+    }
+
+    out.push_str(&format!(
+        "| `{}` | `{}` | {} | {:.2}% | {:.2}% |\n",
+        line.unit_name, line.item_name, bytes_str, from_percent, to_percent,
+    ));
+}
+
+fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
+    let mut changes_by_kind = BTreeMap::new();
+    for change in changes {
+        changes_by_kind.entry(change.kind.clone()).or_insert(vec![]).push(change);
+    }
+    for (change_kind, mut changes) in changes_by_kind {
+        let (emoji, description) = match change_kind {
+            ChangeKind::NewMatch => ("✅", "new matches"),
+            ChangeKind::BrokenMatch => ("💔", "broken matches"),
+            ChangeKind::Improvement => ("📈", "improvements in unmatched functions"),
+            ChangeKind::Regression => ("📉", "regressions in unmatched functions"),
+        };
+
+        let total_changes = changes.len();
+        if total_changes == 0 {
+            out.push_str(&format!("No {description}.\n"));
+            continue;
+        }
+
+        out.push_str("<details>\n");
+        out.push_str(&format!("<summary>{emoji} {total_changes} {description}:</summary>\n"));
+        out.push('\n'); // Must include a blank line before a table
+        out.push_str("| Unit | Function | Size | Before | After |\n");
+        out.push_str("| - | - | - | - | - |\n");
+
+        // Sort to show the biggest changes first.
+        match change_kind {
+            ChangeKind::NewMatch | ChangeKind::Improvement => {
+                changes.sort_by_key(|item| -item.bytes_diff)
+            }
+            ChangeKind::BrokenMatch | ChangeKind::Regression => {
+                changes.sort_by_key(|item| item.bytes_diff)
+            }
+        }
+
+        let mut shown_changes = 0;
+        for line in changes.iter().take(MAX_CHANGE_LINES) {
+            output_line(line, out);
+            shown_changes += 1;
+        }
+
+        out.push('\n'); // Must include a blank line after a table
+
+        let remaining = total_changes - shown_changes;
+        if remaining > 0 {
+            out.push_str(&format!("...and {remaining} more {description}\n"));
+        }
+        out.push_str("</details>\n");
+        out.push('\n');
+    }
+}
+
 pub fn generate_comment(
     from: &Report,
     to: &Report,
@@ -222,10 +317,9 @@ pub fn generate_comment(
         let functions = core::mem::take(&mut unit.functions);
         functions.into_iter().map(move |f| (unit.clone(), f))
     });
-    let mut change_lines_up_to_100 = Vec::new();
-    let mut change_lines_down_from_100 = Vec::new();
-    let mut change_lines_up = Vec::new();
-    let mut change_lines_down = Vec::new();
+
+    let mut changes = vec![];
+
     for (unit, item) in iter.by_ref() {
         let (from, to) = match (item.from, item.to) {
             (Some(from), Some(to)) => (from, to),
@@ -233,70 +327,36 @@ pub fn generate_comment(
             (Some(from), None) => (from, ChangeItemInfo::default()),
             (None, None) => continue,
         };
+        let kind = if to.fuzzy_match_percent == 100.0 {
+            ChangeKind::NewMatch
+        } else if from.fuzzy_match_percent == 100.0 {
+            ChangeKind::BrokenMatch
+        } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
+            ChangeKind::Improvement
+        } else {
+            ChangeKind::Regression
+        };
+        let from_bytes = ((from.fuzzy_match_percent as f64 / 100.0) * from.size as f64) as u64;
+        let to_bytes = ((to.fuzzy_match_percent as f64 / 100.0) * to.size as f64) as u64;
+        let bytes_diff = to_bytes as i64 - from_bytes as i64;
         let name =
             item.metadata.as_ref().and_then(|m| m.demangled_name.as_deref()).unwrap_or(&item.name);
-        let mut from_percent = from.fuzzy_match_percent;
-        if from_percent > 99.99 && from_percent < 100.00 {
-            from_percent = 99.99;
-        }
-        let mut to_percent = to.fuzzy_match_percent;
-        if to_percent > 99.99 && to_percent < 100.00 {
-            to_percent = 99.99;
-        }
-        let change_line = format!(
-            "| `{}` | `{}` | {:.2}% | {:.2}% |\n",
-            unit.name, name, from_percent, to_percent
-        );
-        if to.fuzzy_match_percent == 100.0 {
-            change_lines_up_to_100.push(change_line);
-        } else if from.fuzzy_match_percent == 100.0 {
-            change_lines_down_from_100.push(change_line);
-        } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
-            change_lines_up.push(change_line);
-        } else {
-            change_lines_down.push(change_line);
+
+        let change = ChangeLine {
+            kind,
+            unit_name: unit.name.to_owned(),
+            item_name: name.to_owned(),
+            bytes_diff,
+            from_fuzzy_match_percent: from.fuzzy_match_percent,
+            to_fuzzy_match_percent: to.fuzzy_match_percent,
         };
+
+        changes.push(change);
     }
-
-    let tables_to_print = [
-        ("✅", "newly matched functions", change_lines_up_to_100),
-        ("❌", "regressions in previously matched functions", change_lines_down_from_100),
-        ("📈", "improvements to unmatched functions", change_lines_up),
-        ("📉", "regressions in unmatched functions", change_lines_down),
-    ];
-    for (emoji, description, change_lines) in tables_to_print {
-        let total_changes = change_lines.len();
-        if total_changes == 0 {
-            comment.push_str(&format!("No {description}.\n"));
-            continue;
-        }
-        comment.push_str("<details>\n");
-        comment.push_str(&format!(
-            "<summary>{emoji} {} {description}:</summary>\n",
-            change_lines.len()
-        ));
-        comment.push('\n'); // Must include a blank line before a table
-        comment.push_str("| Unit | Function | Before | After |\n");
-        comment.push_str("| - | - | - | -- |\n");
-
-        let mut printed_changes = 0;
-        for change_line in change_lines {
-            comment.push_str(&change_line);
-            printed_changes += 1;
-            if printed_changes >= 30 {
-                break;
-            }
-        }
-        comment.push('\n');
-
-        let remaining = total_changes - printed_changes;
-        if remaining > 0 {
-            comment.push_str(&format!("...and {} more items\n", remaining));
-        } else if printed_changes == 0 {
-            comment.push_str("No changes\n");
-        }
-        comment.push_str("</details>\n");
-        comment.push('\n');
+    if !changes.is_empty() {
+        generate_changes_list(changes, &mut comment);
+    } else {
+        comment.push_str("No changes\n");
     }
     comment
 }
