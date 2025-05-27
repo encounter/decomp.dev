@@ -224,10 +224,14 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
             continue;
         }
 
-        out.push_str("<details>\n");
+        if change_kind == ChangeKind::BrokenMatch {
+            out.push_str("<details open>\n");
+        } else {
+            out.push_str("<details>\n");
+        }
         out.push_str(&format!("<summary>{emoji} {total_changes} {description}:</summary>\n"));
         out.push('\n'); // Must include a blank line before a table
-        out.push_str("| Unit | Function | Size | Before | After |\n");
+        out.push_str("| Unit | Function | Bytes | Before | After |\n");
         out.push_str("| - | - | - | - | - |\n");
 
         // Sort to show the biggest changes first.
