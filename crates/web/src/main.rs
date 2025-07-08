@@ -150,7 +150,7 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
                 .make_span_with(MyMakeSpan { level: Level::INFO })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .layer(TimeoutLayer::new(Duration::from_secs(60)))
+        .layer(TimeoutLayer::new(Duration::from_secs(120)))
         .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
         .layer(
             SessionManagerLayer::new(session_store)

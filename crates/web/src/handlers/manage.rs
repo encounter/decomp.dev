@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
     Form,
     extract::{Path, State},
@@ -12,9 +12,14 @@ use bytes::Bytes;
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError,
-    models::{ALL_PLATFORMS, Project, ProjectInfo},
+    models::{
+        ALL_PLATFORMS, CachedReportFile, Project, ProjectInfo, ProjectVisibility,
+        project_visibility,
+    },
 };
-use decomp_dev_github::{check_for_reports, graphql::RepositoryPermission, refresh_project};
+use decomp_dev_github::{
+    check_for_reports, extract_github_url, graphql::RepositoryPermission, refresh_project,
+};
 use itertools::Itertools;
 use maud::{DOCTYPE, Markup, html};
 use serde::Deserialize;
@@ -82,9 +87,9 @@ pub async fn manage(
 fn project_fragment(info: &ProjectInfo) -> Markup {
     let project_path = format!("/manage/{}/{}", info.project.owner, info.project.repo);
     html! {
-        article .project {
+        article.project {
             .project-header {
-                h3 .project-title {
+                h3.project-title {
                     a href=(project_path) { (info.project.name()) }
                 }
             }
@@ -123,6 +128,7 @@ async fn render_new(
         .sorted_by(|a, b| lexicmp::lexical_cmp(&a.1, &b.1))
         .collect::<Vec<_>>();
 
+    let current_url = prefill.as_ref().map(|p| p.repo_url()).unwrap_or_default();
     let current_name = prefill.as_ref().and_then(|p| p.name.as_deref()).unwrap_or("");
     let current_short_name = prefill.as_ref().and_then(|p| p.short_name.as_deref()).unwrap_or("");
     let current_platform = prefill.as_ref().and_then(|p| p.platform.as_deref());
@@ -172,11 +178,16 @@ async fn render_new(
                         fieldset {
                             label {
                                 "Repository"
+                                @if current_user.super_admin {
+                                    input name="repository_url" type="url" required
+                                        aria-invalid=[message.map(|_| "true")]
+                                        value=(current_url);
+                                } @else {
+                                    select name="repository_id" aria-invalid=[message.map(|_| "true")] { (repo_options) }
+                                }
                                 @if let Some(message) = message {
-                                    select name="repo" aria-invalid="true" { (repo_options) }
                                     small { (message) }
                                 } @else {
-                                    select name="repo" { (repo_options) }
                                     small { "Repository must be public. Admin permissions are required." }
                                 }
                             }
@@ -225,7 +236,8 @@ fn platform_options(current_platform: Option<&str>) -> Markup {
 
 #[derive(Deserialize)]
 pub struct NewForm {
-    repo: u64,
+    repository_id: Option<u64>,
+    repository_url: Option<String>,
     name: String,
     short_name: String,
     platform: String,
@@ -237,27 +249,54 @@ pub async fn new_save(
     current_user: CurrentUser,
     Form(form): Form<NewForm>,
 ) -> Result<Response, AppError> {
-    if let Some(existing) = state.db.get_project_info_by_id(form.repo, None).await? {
+    let client = current_user.client(&state.config.github)?;
+    let (repository_id, repo) = match (form.repository_id, form.repository_url) {
+        (Some(id), _) => (id, None),
+        (None, Some(url)) => {
+            let Some((owner, repo)) = extract_github_url(&url) else {
+                return render_new(
+                    ctx,
+                    &state,
+                    &current_user,
+                    Some("Invalid repository URL."),
+                    None,
+                )
+                .await;
+            };
+            let Ok(repo) = client.repos(owner, repo).get().await else {
+                return render_new(ctx, &state, &current_user, Some("Repository not found."), None)
+                    .await;
+            };
+            (repo.id.into_inner(), Some(repo))
+        }
+        (None, None) => {
+            return render_new(ctx, &state, &current_user, Some("Repository is required."), None)
+                .await;
+        }
+    };
+    if let Some(existing) = state.db.get_project_info_by_id(repository_id, None).await? {
         return Ok(Redirect::to(&format!("/{}/{}", existing.project.owner, existing.project.repo))
             .into_response());
     }
     let Some(platform) = ALL_PLATFORMS.iter().find(|p| p.to_str() == form.platform) else {
         return Err(AppError::Status(StatusCode::BAD_REQUEST));
     };
-    let client = current_user.client()?;
-    let repo = match client.repos_by_id(form.repo).get().await {
-        Ok(repo) => repo,
-        Err(e) => {
-            tracing::error!("Failed to fetch repository: {:?}", e);
-            return render_new(
-                ctx,
-                &state,
-                &current_user,
-                Some("Failed to fetch repository information."),
-                None,
-            )
-            .await;
-        }
+    let repo = match repo {
+        Some(repo) => repo,
+        None => match client.repos_by_id(repository_id).get().await {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::error!("Failed to fetch repository: {:?}", e);
+                return render_new(
+                    ctx,
+                    &state,
+                    &current_user,
+                    Some("Failed to fetch repository information."),
+                    None,
+                )
+                .await;
+            }
+        },
     };
 
     let name = form.name.trim();
@@ -271,7 +310,7 @@ pub async fn new_save(
         platform: Some(platform.to_str().to_string()),
         ..Default::default()
     };
-    if repo.permissions.as_ref().is_none_or(|p| !p.admin) {
+    if !current_user.super_admin && repo.permissions.as_ref().is_none_or(|p| !p.admin) {
         return render_new(
             ctx,
             &state,
@@ -301,15 +340,28 @@ pub async fn manage_project(
     current_user: CurrentUser,
     ctx: TemplateContext,
 ) -> Result<Response, AppError> {
-    let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
-    else {
+    let Some(info) = state.db.get_project_info(&params.owner, &params.repo, None).await? else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    if !current_user.can_manage_repo(project_info.project.id) {
+    if !current_user.can_manage_repo(info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
 
-    render_manage_project(ctx, &state, &project_info, &current_user, Message::None).await
+    let report = if let (Some(version), Some(commit)) = (info.default_version(), &info.commit) {
+        state
+            .db
+            .get_report(&info.project.owner, &info.project.repo, &commit.sha, version)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to fetch report for {}/{} sha {} version {}",
+                    info.project.owner, info.project.repo, commit.sha, version
+                )
+            })?
+    } else {
+        None
+    };
+    render_manage_project(ctx, &state, &info, report.as_ref(), &current_user, Message::None).await
 }
 
 enum Message {
@@ -322,10 +374,10 @@ fn render_message(message: &Message) -> Markup {
     match message {
         Message::None => Markup::default(),
         Message::Info(msg) => html! {
-            article .info-card { (msg) }
+            article.info-card { (msg) }
         },
         Message::Error(msg) => html! {
-            article .error-card { (msg) }
+            article.error-card { (msg) }
         },
     }
 }
@@ -334,6 +386,7 @@ async fn render_manage_project(
     mut ctx: TemplateContext,
     state: &AppState,
     project_info: &ProjectInfo,
+    latest_report: Option<&CachedReportFile>,
     current_user: &CurrentUser,
     message: Message,
 ) -> Result<Response, AppError> {
@@ -355,6 +408,10 @@ async fn render_manage_project(
     } else {
         None
     };
+
+    // Check if the project is hidden based on matched code percentage
+    let visibility =
+        project_visibility(&project_info.project, latest_report.map(|r| &r.report.measures));
 
     let rendered = html! {
         (DOCTYPE)
@@ -386,8 +443,24 @@ async fn render_manage_project(
                 main {
                     h3 { "Edit " (project_short_name) }
                     (render_message(&message))
+                    @match visibility {
+                        ProjectVisibility::Visible => {},
+                        ProjectVisibility::Disabled => {
+                            article.warning-card { "This project is disabled." }
+                        }
+                        ProjectVisibility::Hidden => {
+                            article.warning-card { "This project is hidden until it has reached a minimum of 0.5% matched code." }
+                        }
+                    }
                     form method="post" enctype="multipart/form-data" data-loading="Saving..." {
                         fieldset {
+                            label {
+                                input name="enabled" type="checkbox" role="switch"
+                                    checked[project_info.project.enabled];
+                                "Enable project"
+                                br;
+                                small.muted { "Disabled projects will not be listed, and reports will not be fetched." }
+                            }
                             label {
                                 "Repository"
                                 input type="text" readonly disabled value=(project_info.project.repo_url());
@@ -489,6 +562,7 @@ pub struct ProjectForm {
     pub enable_pr_comments: Option<String>,
     pub header_image: Option<Bytes>,
     pub clear_header_image: Option<String>,
+    pub enabled: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -553,6 +627,7 @@ pub async fn manage_project_save(
             project_info.project.enable_pr_comments
         },
         header_image_id,
+        enabled: form.enabled.is_some_and(|v| v == "on"),
     };
     state.db.update_project(&project).await?;
     let redirect_url = format!("/{}/{}", params.owner, params.repo);
@@ -565,28 +640,38 @@ pub async fn manage_project_refresh(
     State(state): State<AppState>,
     current_user: CurrentUser,
 ) -> Result<Response, AppError> {
-    let Some(project_info) = state.db.get_project_info(&params.owner, &params.repo, None).await?
-    else {
+    let Some(info) = state.db.get_project_info(&params.owner, &params.repo, None).await? else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    if !current_user.can_manage_repo(project_info.project.id) {
+    if !current_user.can_manage_repo(info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
-    let client = current_user.client()?;
-    let message = match refresh_project(
-        &state.github,
-        &state.db,
-        project_info.project.id,
-        Some(&client),
-        true,
-    )
-    .await
-    {
-        Ok(inserted_reports) => Message::Info(format!("Fetched {} new reports", inserted_reports)),
-        Err(e) => {
-            tracing::error!("Failed to refresh project: {:?}", e);
-            Message::Error(format!("Failed to refresh project: {}", e))
-        }
+    let client = current_user.client(&state.config.github)?;
+    let message =
+        match refresh_project(&state.github, &state.db, info.project.id, Some(&client), true).await
+        {
+            Ok(inserted_reports) => {
+                Message::Info(format!("Fetched {inserted_reports} new reports"))
+            }
+            Err(e) => {
+                tracing::error!("Failed to refresh project: {:?}", e);
+                Message::Error(format!("Failed to refresh project: {e}"))
+            }
+        };
+
+    let report = if let (Some(version), Some(commit)) = (info.default_version(), &info.commit) {
+        state
+            .db
+            .get_report(&info.project.owner, &info.project.repo, &commit.sha, version)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to fetch report for {}/{} sha {} version {}",
+                    info.project.owner, info.project.repo, commit.sha, version
+                )
+            })?
+    } else {
+        None
     };
-    render_manage_project(ctx, &state, &project_info, &current_user, message).await
+    render_manage_project(ctx, &state, &info, report.as_ref(), &current_user, message).await
 }

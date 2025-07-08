@@ -58,7 +58,7 @@ pub async fn csp_middleware(mut req: Request, next: Next) -> Response {
             response.extensions().get::<ExtraDomains>().map(|e| e.0.clone()).unwrap_or_default();
         let response_headers = response.headers_mut();
         let mut header = "default-src 'none';base-uri 'none';script-src ".to_string();
-        let nonce_value = format!("'nonce-{}'", nonce);
+        let nonce_value = format!("'nonce-{nonce}'");
         header.push_str(&nonce_value);
         #[cfg(debug_assertions)]
         {

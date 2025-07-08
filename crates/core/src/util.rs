@@ -31,10 +31,8 @@ impl UrlExt for Url {
                 pairs.append_pair(&k, &v);
             }
         }
-        if !updated {
-            if let Some(value) = value {
-                pairs.append_pair(key, value);
-            }
+        if !updated && let Some(value) = value {
+            pairs.append_pair(key, value);
         }
         drop(pairs);
         if out.query() == Some("") {

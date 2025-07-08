@@ -30,14 +30,14 @@ pub struct ShieldResponse {
     label_color: Option<String>,
 }
 
-fn format_percent(value: f32) -> String { format!("{:.2}%", value) }
+fn format_percent(value: f32) -> String { format!("{value:.2}%") }
 
 fn format_bytes(a: u64, b: u64) -> String {
     let mut a_buf = num_format::Buffer::default();
     let mut b_buf = num_format::Buffer::default();
     a_buf.write_formatted(&a, &num_format::Locale::en);
     b_buf.write_formatted(&b, &num_format::Locale::en);
-    format!("{} B / {} B", a_buf, b_buf)
+    format!("{a_buf} B / {b_buf} B")
 }
 
 fn format_num(a: u32, b: u32) -> String {
@@ -45,7 +45,7 @@ fn format_num(a: u32, b: u32) -> String {
     let mut b_buf = num_format::Buffer::default();
     a_buf.write_formatted(&a, &num_format::Locale::en);
     b_buf.write_formatted(&b, &num_format::Locale::en);
-    format!("{} / {}", a_buf, b_buf)
+    format!("{a_buf} / {b_buf}")
 }
 
 fn format_size(a: u64, b: u64) -> String { format!("{} / {}", size(a), size(b)) }

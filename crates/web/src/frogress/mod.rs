@@ -41,11 +41,9 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
             .get_project_info_by_id(project_id, None)
             .await?
             .ok_or_else(|| anyhow!("No project ID {}", project_id))?;
-        let data = reqwest::get(&format!(
-            "https://progress.decomp.club/data/{}/{}?mode=all",
-            slug, version
-        ))
-        .await?;
+        let data =
+            reqwest::get(&format!("https://progress.decomp.club/data/{slug}/{version}?mode=all"))
+                .await?;
         let data: FrogressAllData = data.json().await?;
         let mut data_iter = data.iter();
         let (data_slug, version_data) =
@@ -196,7 +194,7 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
                 }
                 if report.measures.is_none() {
                     if report.categories.is_empty() {
-                        log::warn!("No measures for {}/{}/{}", slug, version, category);
+                        log::warn!("No measures for {slug}/{version}/{category}");
                         reports.remove(&entry.git_hash);
                     } else {
                         let mut all_measures = Measures::default();

@@ -381,9 +381,9 @@ impl ProgressSections {
     }
 
     pub fn push(&mut self, class: &str, percent: f32, tooltip: String) {
-        let width_class = format!("width-{:.2}", percent).replace('.', "p");
+        let width_class = format!("width-{percent:.2}").replace('.', "p");
         let rendered = html! { .(class).(width_class) data-tooltip=(tooltip) {} };
-        self.width_classes.insert(width_class, format!("width:{}%", percent));
+        self.width_classes.insert(width_class, format!("width:{percent}%"));
         self.rendered.0.push_str(&rendered.0);
     }
 }
@@ -454,7 +454,7 @@ pub async fn get_robots() -> Result<String, AppError> {
     Ok(text)
 }
 
-pub fn escape_script(text: &str) -> PreEscaped<Cow<str>> {
+pub fn escape_script(text: &str) -> PreEscaped<Cow<'_, str>> {
     static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("<(?i:!--|/?script)").unwrap());
     PreEscaped(REGEX.replace_all(text, |caps: &regex::Captures| format!("\\x3C{}", &caps[0][1..])))
 }

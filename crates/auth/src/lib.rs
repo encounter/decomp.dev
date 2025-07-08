@@ -6,7 +6,10 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use decomp_dev_core::{AppError, config::GitHubConfig};
+use decomp_dev_core::{
+    AppError,
+    config::{Config, GitHubConfig},
+};
 use decomp_dev_github::graphql::{
     CurrentUserResponse, RepositoryPermission, fetch_current_user, fetch_simple_current_user,
 };
@@ -46,18 +49,25 @@ pub type Profile = Author;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentUser {
-    pub oauth: StoredOAuth,
+    pub oauth: Option<StoredOAuth>,
     pub data: CurrentUserResponse,
     #[serde(skip, default)]
     pub super_admin: bool,
 }
 
 impl CurrentUser {
-    pub fn client(&self) -> Result<Octocrab> {
-        Octocrab::builder()
-            .oauth(self.oauth.clone().into())
-            .build()
-            .context("Failed to create GitHub client")
+    pub fn client(&self, config: &GitHubConfig) -> Result<Octocrab> {
+        if let Some(oauth) = &self.oauth {
+            Octocrab::builder()
+                .oauth(oauth.clone().into())
+                .build()
+                .context("Failed to create GitHub client")
+        } else {
+            Octocrab::builder()
+                .personal_token(config.token.clone())
+                .build()
+                .context("Failed to create GitHub client")
+        }
     }
 
     pub fn permissions_for_repo(&self, id: u64) -> RepositoryPermission {
@@ -202,7 +212,7 @@ async fn fetch_access_token(config: &GitHubConfig, code: &str) -> Result<Current
     } else {
         tracing::info!("Logged in as @{} ({} repos)", data.login, data.repositories.len());
     }
-    Ok(CurrentUser { oauth, data, super_admin })
+    Ok(CurrentUser { oauth: Some(oauth), data, super_admin })
 }
 
 async fn refresh_access_token(
@@ -229,12 +239,12 @@ async fn refresh_access_token(
     let oauth = StoredOAuth::from(oauth);
     let super_admin = config.super_admin_ids.contains(&prev_auth.data.id);
     tracing::info!("Refreshed token for @{}", prev_auth.data.login);
-    Ok(CurrentUser { oauth, data: prev_auth.data.clone(), super_admin })
+    Ok(CurrentUser { oauth: Some(oauth), data: prev_auth.data.clone(), super_admin })
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
 where
-    GitHubConfig: FromRef<S>,
+    Config: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = Response;
@@ -268,7 +278,7 @@ where
 
 impl<S> OptionalFromRequestParts<S> for CurrentUser
 where
-    GitHubConfig: FromRef<S>,
+    Config: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = (StatusCode, &'static str);
@@ -278,7 +288,7 @@ where
         state: &S,
     ) -> Result<Option<Self>, Self::Rejection> {
         let session = Session::from_request_parts(parts, state).await?;
-        let config = GitHubConfig::from_ref(state);
+        let config = Config::from_ref(state);
         let mut user = match session.get::<CurrentUser>(CURRENT_USER).await {
             Ok(Some(user)) => user,
             Ok(None) => return Ok(None),
@@ -289,7 +299,7 @@ where
         };
         // Refresh user data if the ID is 0
         if user.data.id == 0 {
-            match user.client() {
+            match user.client(&config.github) {
                 Ok(client) => match fetch_simple_current_user(&client).await {
                     Ok(data) => {
                         user.data =
@@ -315,35 +325,37 @@ where
                 }
             }
         }
-        user.super_admin = config.super_admin_ids.contains(&user.data.id);
-        if let Some(expires_at) = user.oauth.expires_at {
-            if (UtcDateTime::now() + Duration::seconds(30)) > expires_at {
-                // Access token expired, attempt to refresh
-                if let Err(e) = session.remove_value(CURRENT_USER).await {
-                    tracing::error!("Failed to remove user from session: {}", e);
-                };
-                if let Some(refresh_token) = &user.oauth.refresh_token {
-                    if let Some(refresh_token_expires_at) = user.oauth.refresh_token_expires_at {
-                        if UtcDateTime::now() >= refresh_token_expires_at {
-                            // Refresh token expired
+        user.super_admin = (config.server.dev_mode && user.data.id == u64::MAX)
+            || config.github.super_admin_ids.contains(&user.data.id);
+        if let Some(oauth) = &user.oauth
+            && let Some(expires_at) = oauth.expires_at
+            && (UtcDateTime::now() + Duration::seconds(30)) > expires_at
+        {
+            // Access token expired, attempt to refresh
+            if let Err(e) = session.remove_value(CURRENT_USER).await {
+                tracing::error!("Failed to remove user from session: {}", e);
+            };
+            if let Some(refresh_token) = &oauth.refresh_token {
+                if let Some(refresh_token_expires_at) = oauth.refresh_token_expires_at
+                    && UtcDateTime::now() >= refresh_token_expires_at
+                {
+                    // Refresh token expired
+                    return Ok(None);
+                }
+                let current_user =
+                    match refresh_access_token(&config.github, refresh_token, &user).await {
+                        Ok(current_user) => current_user,
+                        Err(e) => {
+                            tracing::error!("Failed to refresh access token: {:?}", e);
                             return Ok(None);
                         }
-                    }
-                    let current_user =
-                        match refresh_access_token(&config, refresh_token, &user).await {
-                            Ok(current_user) => current_user,
-                            Err(e) => {
-                                tracing::error!("Failed to refresh access token: {:?}", e);
-                                return Ok(None);
-                            }
-                        };
-                    if let Err(e) = session.insert(CURRENT_USER, current_user.clone()).await {
-                        tracing::error!("Failed to insert user into session: {}", e);
-                    }
-                    return Ok(Some(current_user));
+                    };
+                if let Err(e) = session.insert(CURRENT_USER, current_user.clone()).await {
+                    tracing::error!("Failed to insert user into session: {}", e);
                 }
-                return Ok(None);
+                return Ok(Some(current_user));
             }
+            return Ok(None);
         }
         Ok(Some(user))
     }

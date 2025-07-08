@@ -3,8 +3,9 @@ use axum::{
     http::{HeaderMap, StatusCode, header::REFERER},
     response::{IntoResponse, Redirect, Response},
 };
-use decomp_dev_auth::{CurrentUser, GITHUB_OAUTH_STATE, RETURN_TO, generate_nonce};
-use decomp_dev_core::{AppError, config::GitHubConfig, util::UrlExt};
+use decomp_dev_auth::{CURRENT_USER, CurrentUser, GITHUB_OAUTH_STATE, RETURN_TO, generate_nonce};
+use decomp_dev_core::{AppError, config::Config, util::UrlExt};
+use decomp_dev_github::graphql::CurrentUserResponse;
 use maud::{DOCTYPE, html};
 use tower_sessions::Session;
 
@@ -19,14 +20,30 @@ pub async fn login(
     session: Session,
     headers: HeaderMap,
     Query(query): Query<LoginQuery>,
-    State(config): State<GitHubConfig>,
+    State(config): State<Config>,
     current_user: Option<CurrentUser>,
     mut ctx: TemplateContext,
 ) -> Result<Response, AppError> {
     if current_user.is_some() {
         return Ok(Redirect::to("/").into_response());
     }
-    let Some(config) = &config.oauth else {
+    let Some(config) = &config.github.oauth else {
+        // Dev mode override
+        if config.server.dev_mode {
+            session
+                .insert(CURRENT_USER, CurrentUser {
+                    oauth: None,
+                    data: CurrentUserResponse {
+                        id: u64::MAX,
+                        login: "devuser".to_string(),
+                        url: String::new(),
+                        repositories: vec![],
+                    },
+                    super_admin: true,
+                })
+                .await?;
+            return Ok(Redirect::to("/").into_response());
+        }
         tracing::warn!("No GitHub OAuth config found");
         return Ok((StatusCode::INTERNAL_SERVER_ERROR, "No GitHub OAuth config").into_response());
     };

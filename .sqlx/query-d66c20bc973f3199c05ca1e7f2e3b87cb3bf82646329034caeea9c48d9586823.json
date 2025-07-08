@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id\n            FROM projects\n            WHERE id = ?\n            ",
+  "query": "\n            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id, enabled\n            FROM projects\n            WHERE id = ?\n            ",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,11 @@
         "name": "header_image_id",
         "ordinal": 9,
         "type_info": "Blob"
+      },
+      {
+        "name": "enabled",
+        "ordinal": 10,
+        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -67,8 +72,9 @@
       true,
       true,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "36261e887badca80fc0c19ac0a368951387da8f8a42623be91ca2d251c745364"
+  "hash": "d66c20bc973f3199c05ca1e7f2e3b87cb3bf82646329034caeea9c48d9586823"
 }

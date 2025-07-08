@@ -127,7 +127,7 @@ async fn list_installation_repositories(
         page += 1;
         response = app_client
             .get(
-                &format!("/installation/repositories?page={}", page),
+                &format!("/installation/repositories?page={page}"),
                 Some(&PageParams { per_page: Some(100), page: Some(page) }),
             )
             .await?;
@@ -247,13 +247,13 @@ pub async fn refresh_project(
         .get_project_info_by_id(repo_id, None)
         .await
         .context("Failed to fetch project info")?
-        .with_context(|| format!("Failed to fetch project info for ID {}", repo_id))?;
+        .with_context(|| format!("Failed to fetch project info for ID {repo_id}"))?;
     let repo = client_override
         .unwrap_or(&github.client)
         .repos_by_id(project_info.project.id)
         .get()
         .await
-        .with_context(|| format!("Failed to fetch repo for ID {}", repo_id))?;
+        .with_context(|| format!("Failed to fetch repo for ID {repo_id}"))?;
     let branch = repo.default_branch.as_deref().unwrap_or("main");
 
     let owner = repo.owner.context("Repository has no owner")?;
@@ -270,7 +270,7 @@ pub async fn refresh_project(
             .get_project_info_by_id(repo_id, None)
             .await
             .context("Failed to fetch project info")?
-            .with_context(|| format!("Failed to fetch project info for ID {}", repo_id))?;
+            .with_context(|| format!("Failed to fetch project info for ID {repo_id}"))?;
     }
 
     let project = &project_info.project;
@@ -324,16 +324,15 @@ pub async fn refresh_project(
                 }
                 Err(e) => {
                     return Err(e)
-                        .with_context(|| format!("Failed to fetch workflows page {}", page));
+                        .with_context(|| format!("Failed to fetch workflows page {page}"));
                 }
             };
             for run in items {
-                if !full_refresh {
-                    if let Some(commit) = project_info.commit.as_ref() {
-                        if run.head_sha == commit.sha {
-                            break 'outer;
-                        }
-                    }
+                if !full_refresh
+                    && let Some(commit) = project_info.commit.as_ref()
+                    && run.head_sha == commit.sha
+                {
+                    break 'outer;
                 }
                 runs.push(run);
             }
@@ -643,4 +642,38 @@ pub async fn check_for_reports(
         }
     }
     Err(anyhow!("No workflow runs containing reports found."))
+}
+
+pub fn extract_github_url(url: &str) -> Option<(&str, &str)> {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    let caps = REGEX
+        .get_or_init(|| {
+            Regex::new(r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?(?:/|$)")
+                .unwrap()
+        })
+        .captures(url)?;
+    let owner = caps.name("owner").map(|m| m.as_str()).unwrap_or_default();
+    let repo = caps.name("repo").map(|m| m.as_str()).unwrap_or_default();
+    Some((owner, repo))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_github_url;
+
+    #[test]
+    fn test_extract_github_url() {
+        let cases: &[(&str, Option<(&str, &str)>)] = &[
+            ("https://github.com/foo/bar", Some(("foo", "bar"))),
+            ("http://github.com/foo/bar/", Some(("foo", "bar"))),
+            ("https://github.com/foo/bar.git", Some(("foo", "bar"))),
+            ("https://github.com/foo/bar/issues/17", Some(("foo", "bar"))),
+            ("https://gitlab.com/foo/bar", None),
+            ("https://github.com/foo", None),
+            ("https://github.com/foo/bar.git/issues", Some(("foo", "bar"))),
+        ];
+        for &(url, expected) in cases {
+            assert_eq!(extract_github_url(url), expected);
+        }
+    }
 }

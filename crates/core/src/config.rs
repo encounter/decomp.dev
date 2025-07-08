@@ -11,6 +11,8 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     pub port: u16,
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

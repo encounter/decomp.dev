@@ -89,7 +89,7 @@ fn add_charset<ResBody>(response: &mut Response<ResBody>) {
         return;
     };
     if mime.type_() == mime::TEXT && mime.get_param("charset").is_none() {
-        existing.insert(format!("{};charset=utf-8", mime).parse().unwrap());
+        existing.insert(format!("{mime};charset=utf-8").parse().unwrap());
     }
 }
 

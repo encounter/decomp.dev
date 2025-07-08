@@ -64,6 +64,14 @@ pub async fn create(
 
 pub async fn refresh_projects(state: &AppState, full_refresh: bool) -> Result<()> {
     for project_info in state.db.get_projects().await? {
+        if !project_info.project.enabled {
+            log::debug!(
+                "Skipping disabled project {}/{}",
+                project_info.project.owner,
+                project_info.project.repo
+            );
+            continue;
+        }
         if !full_refresh {
             // Skip projects with active app installations
             if let Some(installations) = &state.github.installations {

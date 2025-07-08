@@ -118,14 +118,12 @@ pub async fn webhook(GitHubEvent { event, state }: GitHubEvent) -> Result<Respon
             }
         }
         WebhookEventPayload::PullRequest(inner) => {
-            if inner.action == PullRequestWebhookEventAction::Opened
-                || inner.action == PullRequestWebhookEventAction::Synchronize
+            if (inner.action == PullRequestWebhookEventAction::Opened
+                || inner.action == PullRequestWebhookEventAction::Synchronize)
+                && let Err(e) = handle_pull_request_update(&state, client, inner.pull_request).await
             {
-                if let Err(e) = handle_pull_request_update(&state, client, inner.pull_request).await
-                {
-                    tracing::error!("Error handling pull_request event: {e}");
-                    return Ok((StatusCode::OK, "Internal error").into_response());
-                }
+                tracing::error!("Error handling pull_request event: {e}");
+                return Ok((StatusCode::OK, "Internal error").into_response());
             }
         }
         WebhookEventPayload::Installation(inner) => {

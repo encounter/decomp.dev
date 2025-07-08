@@ -35,9 +35,9 @@ pub fn run(args: Args) -> Result<()> {
     let comment = generate_comment(&previous_report, &current_report, None, None, None, changes);
     if let Some(out_path) = &args.output {
         std::fs::write(out_path.with_platform_encoding(), comment)
-            .with_context(|| format!("Failed to write output file '{}'", out_path))?;
+            .with_context(|| format!("Failed to write output file '{out_path}'"))?;
     } else {
-        println!("{}", comment);
+        println!("{comment}");
     }
     Ok(())
 }

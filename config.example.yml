@@ -1,5 +1,8 @@
 server:
   port: 3000
+  # Enable development mode
+  # WARNING: Allows anyone to log in as a super admin
+  dev_mode: true
 
 db:
   url: sqlite:./db.sqlite
@@ -7,6 +10,3 @@ db:
 github:
   # Personal access token for public repo access
   token: ghp_abcd1234abcd1234abcd1234abcd1234abcd
-
-openai:
-  api_key: sk-proj-abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234

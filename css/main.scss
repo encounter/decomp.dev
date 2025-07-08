@@ -533,9 +533,18 @@ body > footer {
 
 details.dropdown {
   clear: right;
+
+  summary + ul {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
 }
 
 .repo-link {
   float: right;
   margin-inline-start: 1em;
+}
+
+label:has(> input[type="checkbox"]) {
+  margin-bottom: var(--pico-spacing);
 }

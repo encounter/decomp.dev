@@ -20,6 +20,7 @@ pub struct Project {
     pub workflow_id: Option<String>,
     pub enable_pr_comments: bool,
     pub header_image_id: Option<ImageId>,
+    pub enabled: bool,
 }
 
 impl Default for Project {
@@ -36,12 +37,13 @@ impl Default for Project {
             workflow_id: None,
             enable_pr_comments: true,
             header_image_id: None,
+            enabled: true,
         }
     }
 }
 
 impl Project {
-    pub fn name(&self) -> Cow<str> {
+    pub fn name(&self) -> Cow<'_, str> {
         if let Some(name) = self.name.as_ref() {
             Cow::Borrowed(name)
         } else {
@@ -54,6 +56,8 @@ impl Project {
     }
 
     pub fn repo_url(&self) -> String { format!("https://github.com/{}/{}", self.owner, self.repo) }
+
+    pub fn default_category(&self) -> &str { self.default_category.as_deref().unwrap_or("all") }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -223,5 +227,23 @@ impl FromStr for Platform {
             "wii" => Ok(Self::Wii),
             _ => Err(()),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectVisibility {
+    Visible,
+    Hidden,
+    Disabled,
+}
+
+pub fn project_visibility(project: &Project, measures: Option<&Measures>) -> ProjectVisibility {
+    // Hide projects with less than 0.5% matched code or if the project is disabled
+    if !project.enabled {
+        ProjectVisibility::Disabled
+    } else if measures.is_none_or(|m| m.matched_code_percent < 0.5) {
+        ProjectVisibility::Hidden
+    } else {
+        ProjectVisibility::Visible
     }
 }

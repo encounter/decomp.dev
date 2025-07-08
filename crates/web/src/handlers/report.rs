@@ -10,7 +10,7 @@ use axum::{
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
-    models::{FullReportFile, ProjectInfo},
+    models::{FullReportFile, ProjectInfo, ProjectVisibility, project_visibility},
     util::{UrlExt, size},
 };
 use decomp_dev_images::{
@@ -162,41 +162,37 @@ fn is_valid_extension(ext: &str) -> bool {
 
 fn extract_extension(params: ReportParams) -> (ReportParams, Option<String>) {
     if let Some(commit) = params.commit.as_deref() {
-        if let Some((commit, ext)) = commit.rsplit_once('.') {
-            if is_valid_extension(ext) {
-                return (
-                    ReportParams { commit: Some(commit.to_string()), ..params },
-                    Some(ext.to_string()),
-                );
-            }
+        if let Some((commit, ext)) = commit.rsplit_once('.')
+            && is_valid_extension(ext)
+        {
+            return (
+                ReportParams { commit: Some(commit.to_string()), ..params },
+                Some(ext.to_string()),
+            );
         }
     } else if let Some(version) = params.version.as_deref() {
-        if let Some((version, ext)) = version.rsplit_once('.') {
-            if is_valid_extension(ext) {
-                return (
-                    ReportParams { version: Some(version.to_string()), ..params },
-                    Some(ext.to_string()),
-                );
-            }
+        if let Some((version, ext)) = version.rsplit_once('.')
+            && is_valid_extension(ext)
+        {
+            return (
+                ReportParams { version: Some(version.to_string()), ..params },
+                Some(ext.to_string()),
+            );
         }
     } else if let Some(repo) = params.repo.as_deref() {
-        if let Some((repo, ext)) = repo.rsplit_once('.') {
-            if is_valid_extension(ext) {
-                return (
-                    ReportParams { repo: Some(repo.to_string()), ..params },
-                    Some(ext.to_string()),
-                );
-            }
+        if let Some((repo, ext)) = repo.rsplit_once('.')
+            && is_valid_extension(ext)
+        {
+            return (
+                ReportParams { repo: Some(repo.to_string()), ..params },
+                Some(ext.to_string()),
+            );
         }
-    } else if let Some(id) = params.id.as_deref() {
-        if let Some((id, ext)) = id.rsplit_once('.') {
-            if is_valid_extension(ext) {
-                return (
-                    ReportParams { id: Some(id.to_string()), ..params },
-                    Some(ext.to_string()),
-                );
-            }
-        }
+    } else if let Some(id) = params.id.as_deref()
+        && let Some((id, ext)) = id.rsplit_once('.')
+        && is_valid_extension(ext)
+    {
+        return (ReportParams { id: Some(id.to_string()), ..params }, Some(ext.to_string()));
     }
     (params, None)
 }
@@ -547,14 +543,13 @@ fn apply_scope<'a>(
             .units
             .iter()
             .filter_map(|unit| {
-                if let Some(category_id) = &category_id_filter {
-                    if !unit
+                if let Some(category_id) = &category_id_filter
+                    && !unit
                         .metadata
                         .as_ref()
                         .is_some_and(|m| m.progress_categories.iter().any(|c| c == category_id))
-                    {
-                        return None;
-                    }
+                {
+                    return None;
                 }
                 let measures = unit.measures.as_ref()?;
                 if measures.total_code == 0 {
@@ -644,9 +639,14 @@ async fn render_report(
         format!("/manage/{}/{}", project_info.project.owner, project_info.project.repo);
     let can_manage =
         current_user.as_ref().is_some_and(|u| u.can_manage_repo(project_info.project.id));
+    let default_category = project_info.project.default_category();
 
     let is_default_version = project_info.default_version() == Some(report.version.as_str());
     let is_latest_commit = project_info.next_commit.is_none();
+    let is_default_category = current_category.is_none_or(|c| c.id == default_category);
+    let is_primary_view =
+        is_latest_commit && is_default_version && is_default_category && current_unit.is_none();
+
     let canonical_url = if is_default_version && is_latest_commit {
         request_url
             .with_path(&format!("/{}/{}", project_info.project.owner, project_info.project.repo))
@@ -691,14 +691,8 @@ async fn render_report(
         })
         .collect::<Vec<_>>();
 
-    let all_url = canonical_url.query_param(
-        "category",
-        if project_info.project.default_category.as_deref().is_none_or(|c| c == "all") {
-            None
-        } else {
-            Some("all")
-        },
-    );
+    let all_url = canonical_url
+        .query_param("category", if default_category == "all" { None } else { Some("all") });
     let all_category =
         ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
     let current_category = current_category
@@ -754,9 +748,16 @@ async fn render_report(
     };
     let project_short_name = project_info.project.short_name();
     let project_short_name_with_label = if let Some(label) = label {
-        Cow::Owned(format!("{} ({})", project_short_name, label))
+        Cow::Owned(format!("{project_short_name} ({label})"))
     } else {
         Cow::Borrowed(project_short_name)
+    };
+
+    // Only show visibility banners if we're on the primary view
+    let visibility = if is_primary_view {
+        project_visibility(&project_info.project, Some(measures))
+    } else {
+        ProjectVisibility::Visible
     };
 
     // Load blocking resources first so we don't duplicate them
@@ -784,7 +785,7 @@ async fn render_report(
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
-                @if !is_latest_commit || !is_default_version {
+                @if !is_primary_view {
                     // Prevent search engines from indexing anything but the primary report
                     meta name="robots" content="noindex";
                 }
@@ -819,6 +820,15 @@ async fn render_report(
                     }
                 }
                 main {
+                    @match visibility {
+                        ProjectVisibility::Visible => {},
+                        ProjectVisibility::Disabled => {
+                            article.warning-card { "This project is disabled." }
+                        }
+                        ProjectVisibility::Hidden => {
+                            article.warning-card { "This project is hidden until it has reached a minimum of 0.5% matched code." }
+                        }
+                    }
                     .actions {
                         details.dropdown {
                             summary {}
@@ -949,18 +959,28 @@ async fn render_report(
                             }
                         }
                     }
-                    canvas #treemap {}
-                    (report_chunks)
-                    script nonce=[ctx.nonce.as_deref()] {
-                        (PreEscaped(r#"window.units="#))
-                        (escape_script(&serde_json::to_string(&units)?))
-                        (PreEscaped(r#";drawTreemap("treemap","#))
-                        (current_unit.is_none())
-                        (PreEscaped(r#",window.units)"#))
-                    }
-                    noscript {
-                        style nonce=[ctx.nonce.as_deref()] { "canvas{display:none}" }
-                        img #treemap src=(image_url) alt="Progress graph";
+                    @if units.is_empty() {
+                        p.muted {
+                            @if current_unit.is_some() {
+                                "No function information available."
+                            } @else {
+                                "No unit information available."
+                            }
+                        }
+                    } @else {
+                        canvas #treemap {}
+                        (report_chunks)
+                        script nonce=[ctx.nonce.as_deref()] {
+                            (PreEscaped(r#"window.units="#))
+                            (escape_script(&serde_json::to_string(&units)?))
+                            (PreEscaped(r#";drawTreemap("treemap","#))
+                            (current_unit.is_none())
+                            (PreEscaped(r#",window.units)"#))
+                        }
+                        noscript {
+                            style nonce=[ctx.nonce.as_deref()] { "canvas{display:none}" }
+                            img #treemap src=(image_url) alt="Progress graph";
+                        }
                     }
                 }
             }
@@ -1036,7 +1056,7 @@ async fn render_history(
     };
     let project_short_name = project_info.project.short_name();
     let project_short_name_with_label = if let Some(label) = label {
-        Cow::Owned(format!("{} ({})", project_short_name, label))
+        Cow::Owned(format!("{project_short_name} ({label})"))
     } else {
         Cow::Borrowed(project_short_name)
     };

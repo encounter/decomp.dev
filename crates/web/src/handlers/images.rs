@@ -54,21 +54,21 @@ pub async fn get_image(
     let mut transforms = Vec::<Transform>::new();
     let mut current_width = image_width;
     let mut current_height = image_height;
-    if let Some(width) = query.width {
-        if current_width > width {
-            // Maintaining aspect ratio
-            let height = (current_height as f32 * (width as f32 / current_width as f32)) as u32;
-            current_width = width;
-            current_height = height;
-        }
+    if let Some(width) = query.width
+        && current_width > width
+    {
+        // Maintaining aspect ratio
+        let height = (current_height as f32 * (width as f32 / current_width as f32)) as u32;
+        current_width = width;
+        current_height = height;
     }
-    if let Some(height) = query.height {
-        if current_height > height {
-            // Maintaining aspect ratio
-            let width = (current_width as f32 * (height as f32 / current_height as f32)) as u32;
-            current_width = width;
-            current_height = height;
-        }
+    if let Some(height) = query.height
+        && current_height > height
+    {
+        // Maintaining aspect ratio
+        let width = (current_width as f32 * (height as f32 / current_height as f32)) as u32;
+        current_width = width;
+        current_height = height;
     }
     if current_width != image_width || current_height != image_height {
         transforms.push(Transform::Resize(current_width, current_height));

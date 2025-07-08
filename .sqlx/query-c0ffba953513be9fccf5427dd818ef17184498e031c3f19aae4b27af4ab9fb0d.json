@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO projects (id, owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id, enabled, created_at, updated_at)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)\n            ON CONFLICT (id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 12
+    },
+    "nullable": []
+  },
+  "hash": "c0ffba953513be9fccf5427dd818ef17184498e031c3f19aae4b27af4ab9fb0d"
+}

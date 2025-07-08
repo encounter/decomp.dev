@@ -10,7 +10,10 @@ use axum::{
 use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
-    models::{CachedReportFile, Commit, Platform, ProjectInfo, ReportInner},
+    models::{
+        CachedReportFile, Commit, Platform, ProjectInfo, ProjectVisibility, ReportInner,
+        project_visibility,
+    },
     util::{UrlExt, size},
 };
 use maud::{DOCTYPE, Markup, html};
@@ -54,13 +57,6 @@ const SORT_OPTIONS: &[SortOption] = &[
     SortOption { key: "matched_code", name: "Matched Code" },
     SortOption { key: "total_code", name: "Total Code" },
 ];
-
-#[derive(Serialize, Clone)]
-pub struct ProgressSection {
-    pub class: String,
-    pub percent: f32,
-    pub tooltip: String,
-}
 
 #[derive(serde::Serialize)]
 pub struct ProjectsResponse {
@@ -217,6 +213,11 @@ pub async fn get_projects(
             }
         }
     }
+
+    // Hide projects that are disabled or don't meet visibility criteria
+    out.retain(|c| {
+        project_visibility(&c.info.project, Some(&c.measures)) == ProjectVisibility::Visible
+    });
 
     let current_sort_key = query.sort.as_deref().unwrap_or("updated");
     let current_sort = SORT_OPTIONS
