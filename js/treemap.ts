@@ -149,6 +149,9 @@ const drawUnits = (
   height: number,
 ) => {
   for (const unit of units) {
+    if (!unit.visible) {
+      continue;
+    }
     const { x, y, w, h } = unitBounds(unit, width, height);
     ctx.fillStyle = unit.color;
     ctx.beginPath();
@@ -181,19 +184,16 @@ const draw = (canvas: HTMLCanvasElement, units: Unit[]) => {
   if (!cachedCanvas) {
     cachedCanvas = document.createElement('canvas');
   }
-  if (
-    cachedCanvas.width !== renderWidth ||
-    cachedCanvas.height !== renderHeight
-  ) {
-    cachedCanvas.width = renderWidth;
-    cachedCanvas.height = renderHeight;
-    const cachedCtx = cachedCanvas.getContext('2d');
-    if (!cachedCtx) {
-      return;
-    }
-    setup(cachedCtx, ratio, width, height);
-    drawUnits(cachedCtx, units, width, height);
+
+  cachedCanvas.width = renderWidth;
+  cachedCanvas.height = renderHeight;
+  const cachedCtx = cachedCanvas.getContext('2d');
+  if (!cachedCtx) {
+    return;
   }
+  setup(cachedCtx, ratio, width, height);
+  drawUnits(cachedCtx, units, width, height);
+
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return;
@@ -220,11 +220,30 @@ const findUnit = (
   const { width, height, left, top } = canvas.getBoundingClientRect();
   const mx = clientX - left;
   const my = clientY - top;
+  let nearOverlapUnit = null;
+  const epsilon = 3;
   for (const unit of units) {
+    if (!unit.visible) {
+      continue;
+    }
     const { x, y, w, h } = unitBounds(unit, width, height);
     if (mx >= x && mx <= x + w && my >= y && my <= y + h) {
       return unit;
     }
+    // If the unit doesn't exactly overlap the cursor, check if it's within a few pixels of overlapping.
+    // This is needed to make it possible to hover and click units that have subpixel widths/heights.
+    if (
+      !nearOverlapUnit &&
+      (mx >= x - epsilon) &&
+      (mx <= x + w + epsilon) &&
+      (my >= y - epsilon) &&
+      (my <= y + h + epsilon)
+    ) {
+      nearOverlapUnit = unit;
+    }
+  }
+  if (nearOverlapUnit) {
+    return nearOverlapUnit;
   }
   return null;
 };
@@ -245,10 +264,15 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     if (unit === hovered) {
       return;
     }
-    if (clickable) {
-      canvas.style.cursor = unit ? 'pointer' : 'default';
+    if (unit && !unit.visible) {
+      canvas.style.cursor = 'default';
+      hovered = null;
+    } else {
+      if (clickable) {
+        canvas.style.cursor = unit ? 'pointer' : 'default';
+      }
+      hovered = unit;
     }
-    hovered = unit;
     dirty = true;
     queueDraw();
   };
@@ -263,6 +287,27 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     dirty = true;
     queueDraw();
   };
+
+  const updateFilter = (filter: string) => {
+    // Separate multiple different filter terms with spaces.
+    const terms = filter.toLowerCase().split(/\s+/);
+    for (const unit of units) {
+      if (terms.every(term => checkFilterTermMatches(term, unit))) {
+        unit.visible = true;
+      } else {
+        unit.visible = false;
+      }
+    }
+    dirty = true;
+    queueDraw();
+  }
+  const handleFilter = (evt: Event) => {
+    if (evt.currentTarget === null || !(evt.currentTarget instanceof HTMLInputElement)) {
+      return;
+    }
+    updateFilter(evt.currentTarget.value);
+  };
+
   canvas.addEventListener('mousemove', (e) => {
     isTouch = false;
     handleHover(e);
@@ -275,13 +320,18 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
   canvas.addEventListener('touchend', handleLeave);
   canvas.addEventListener('click', ({ clientX, clientY }) => {
     const unit = findUnit(canvas, units, clientX, clientY);
-    if (!unit || !unit.name || !clickable) {
+    if (!unit || !unit.name || !unit.visible || !clickable) {
       return;
     }
     const url = new URL(window.location.href);
     url.searchParams.set('unit', unit.name);
     window.location.href = url.toString();
   });
+  let filterInput = document.querySelector('input[name="filter"]');
+  if (filterInput && filterInput instanceof HTMLInputElement) {
+    updateFilter(filterInput.value); // Initialize on page load
+    filterInput.addEventListener('input', handleFilter);
+  }
   updatePixelRatio(queueDraw, false);
   draw(canvas, units);
 };
@@ -302,5 +352,56 @@ const updatePixelRatio = (redraw: () => void, now: boolean) => {
     redraw();
   }
 };
+
+const checkFilterTermMatches = (term: string, unit: Unit) => {
+  let special_term_regexp = new RegExp(`^(>|<|>=|<=|=|==|!=)(\\d+(?:\\.\\d+)?)(%|${UNITS.join("|")})$`, "i");
+  const match = term.match(special_term_regexp);
+  if (match) {
+    // Filter based on match percent or size.
+    const operator = match[1];
+    const type = match[3];
+
+    let lhs, rhs;
+    switch (type) {
+      case "%":
+        // Match percent
+        lhs = unit.fuzzy_match_percent;
+        rhs = parseFloat(match[2]);
+        break;
+      default:
+        // Size unit, e.g. kB
+        lhs = unit.total_code;
+        rhs = parseFloat(match[2]);
+        let sizeUnitIndex = 0;
+        while (sizeUnitIndex < UNITS.length - 1) {
+          if (type.toLowerCase() == UNITS[sizeUnitIndex].toLowerCase()) {
+            break;
+          }
+          rhs *= 1000.0;
+          sizeUnitIndex += 1;
+        }
+        break;
+    }
+
+    switch (operator) {
+      case ">":
+        return lhs > rhs;
+      case "<":
+        return lhs < rhs;
+      case ">=":
+        return lhs >= rhs;
+      case "<=":
+        return lhs <= rhs;
+      case "=":
+      case "==":
+        return lhs === rhs;
+      case "!=":
+        return lhs !== rhs;
+    }
+  } else {
+    // Filter based on name.
+    return unit.name.toLowerCase().includes(term);
+  }
+}
 
 window.drawTreemap = drawTreemap;
