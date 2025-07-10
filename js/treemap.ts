@@ -353,7 +353,7 @@ const updatePixelRatio = (redraw: () => void, now: boolean) => {
   }
 };
 
-const checkFilterTermMatches = (term: string, unit: Unit) => {
+const checkFilterTermMatches = (term: string, unit: Unit): boolean => {
   let special_term_regexp = new RegExp(`^(>|<|>=|<=|=|==|!=)(\\d+(?:\\.\\d+)?)(%|${UNITS.join("|")})$`, "i");
   const match = term.match(special_term_regexp);
   if (match) {
@@ -397,6 +397,8 @@ const checkFilterTermMatches = (term: string, unit: Unit) => {
         return lhs === rhs;
       case "!=":
         return lhs !== rhs;
+      default:
+        return false;
     }
   } else {
     // Filter based on name.
