@@ -133,6 +133,7 @@ let hovered: Unit | null = null;
 let dirty = false;
 let isTouch = false;
 let cachedCanvas: HTMLCanvasElement | null = null;
+let unitsDirty = false;
 
 const setup = (
   ctx: CanvasRenderingContext2D,
@@ -144,7 +145,7 @@ const setup = (
   ctx.clearRect(0, 0, width, height);
   // Clear the canvas with dark mode's background color, even in light mode.
   // This is so that transparency doesn't make the canvas look bad in light mode.
-  ctx.fillStyle = "#181c25";
+  ctx.fillStyle = '#181c25';
   ctx.fillRect(0, 0, width, height);
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#000';
@@ -159,16 +160,17 @@ const drawUnits = (
   for (const unit of units) {
     const { x, y, w, h } = unitBounds(unit, width, height);
 
-    let innerColor, outerColor;
-    if (unit.fuzzy_match_percent == 100.0) {
-      innerColor = "hsl(120 100% 39%)";
-      outerColor = "hsl(120 100% 17%)";
+    let innerColor: string;
+    let outerColor: string;
+    if (unit.fuzzy_match_percent === 100.0) {
+      innerColor = 'hsl(120 100% 39%)';
+      outerColor = 'hsl(120 100% 17%)';
     } else {
       innerColor = `color-mix(in srgb, hsl(221 0% 21%), hsl(221 50% 35%) ${unit.fuzzy_match_percent}%)`;
       outerColor = `color-mix(in srgb, hsl(221 0% 5%), hsl(221 50% 15%) ${unit.fuzzy_match_percent}%)`;
     }
-    const cx = x + (w * 0.4);
-    const cy = y + (h * 0.4);
+    const cx = x + w * 0.4;
+    const cy = y + h * 0.4;
     const r0 = (w + h) * 0.1;
     const r1 = (w + h) * 0.5;
     const gradient = ctx.createRadialGradient(cx, cy, r0, cx, cy, r1);
@@ -201,6 +203,7 @@ const draw = (canvas: HTMLCanvasElement, units: Unit[]) => {
   const renderHeight = Math.round(height * ratio);
   if (
     !dirty &&
+    !unitsDirty &&
     canvas.width === renderWidth &&
     canvas.height === renderHeight
   ) {
@@ -218,14 +221,21 @@ const draw = (canvas: HTMLCanvasElement, units: Unit[]) => {
     cachedCanvas = document.createElement('canvas');
   }
 
-  cachedCanvas.width = renderWidth;
-  cachedCanvas.height = renderHeight;
-  const cachedCtx = cachedCanvas.getContext('2d');
-  if (!cachedCtx) {
-    return;
+  if (
+    unitsDirty ||
+    cachedCanvas.width !== renderWidth ||
+    cachedCanvas.height !== renderHeight
+  ) {
+    unitsDirty = false;
+    cachedCanvas.width = renderWidth;
+    cachedCanvas.height = renderHeight;
+    const cachedCtx = cachedCanvas.getContext('2d');
+    if (!cachedCtx) {
+      return;
+    }
+    setup(cachedCtx, ratio, width, height);
+    drawUnits(cachedCtx, units, width, height);
   }
-  setup(cachedCtx, ratio, width, height);
-  drawUnits(cachedCtx, units, width, height);
 
   const ctx = canvas.getContext('2d');
   if (!ctx) {
@@ -267,10 +277,10 @@ const findUnit = (
     // This is needed to make it possible to hover and click units that have subpixel widths/heights.
     if (
       !nearOverlapUnit &&
-      (mx >= x - epsilon) &&
-      (mx <= x + w + epsilon) &&
-      (my >= y - epsilon) &&
-      (my <= y + h + epsilon)
+      mx >= x - epsilon &&
+      mx <= x + w + epsilon &&
+      my >= y - epsilon &&
+      my <= y + h + epsilon
     ) {
       nearOverlapUnit = unit;
     }
@@ -297,7 +307,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     if (unit === hovered) {
       return;
     }
-    if (unit && unit.filtered) {
+    if (unit?.filtered) {
       canvas.style.cursor = 'default';
       hovered = null;
     } else {
@@ -325,17 +335,18 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     // Separate multiple different filter terms with spaces.
     const terms = filter.toLowerCase().split(/\s+/);
     for (const unit of units) {
-      if (terms.every(term => checkFilterTermMatches(term, unit))) {
-        unit.filtered = false;
-      } else {
-        unit.filtered = true;
-      }
+      unit.filtered = !terms.every((term) =>
+        checkFilterTermMatches(term, unit),
+      );
     }
-    dirty = true;
+    unitsDirty = true;
     queueDraw();
-  }
+  };
   const handleFilter = (evt: Event) => {
-    if (evt.currentTarget === null || !(evt.currentTarget instanceof HTMLInputElement)) {
+    if (
+      evt.currentTarget === null ||
+      !(evt.currentTarget instanceof HTMLInputElement)
+    ) {
       return;
     }
     updateFilter(evt.currentTarget.value);
@@ -360,7 +371,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     url.searchParams.set('unit', unit.name);
     window.location.href = url.toString();
   });
-  let filterInput = document.querySelector('input[name="filter"]');
+  const filterInput = document.querySelector('input[name="filter"]');
   if (filterInput && filterInput instanceof HTMLInputElement) {
     updateFilter(filterInput.value); // Initialize on page load
     filterInput.addEventListener('input', handleFilter);
@@ -386,57 +397,62 @@ const updatePixelRatio = (redraw: () => void, now: boolean) => {
   }
 };
 
+const SPECIAL_TERM_REGEXP = new RegExp(
+  `^(>|<|>=|<=|=|==|!=)(\\d+(?:\\.\\d+)?)(%|${UNITS.join('|')})$`,
+  'i',
+);
+
 const checkFilterTermMatches = (term: string, unit: Unit): boolean => {
-  let special_term_regexp = new RegExp(`^(>|<|>=|<=|=|==|!=)(\\d+(?:\\.\\d+)?)(%|${UNITS.join("|")})$`, "i");
-  const match = term.match(special_term_regexp);
+  const match = term.match(SPECIAL_TERM_REGEXP);
   if (match) {
     // Filter based on match percent or size.
     const operator = match[1];
     const type = match[3];
 
-    let lhs, rhs;
+    let lhs: number;
+    let rhs: number;
     switch (type) {
-      case "%":
+      case '%':
         // Match percent
         lhs = unit.fuzzy_match_percent;
-        rhs = parseFloat(match[2]);
+        rhs = Number.parseFloat(match[2]);
         break;
-      default:
+      default: {
         // Size unit, e.g. kB
         lhs = unit.total_code;
-        rhs = parseFloat(match[2]);
+        rhs = Number.parseFloat(match[2]);
         let sizeUnitIndex = 0;
         while (sizeUnitIndex < UNITS.length - 1) {
-          if (type.toLowerCase() == UNITS[sizeUnitIndex].toLowerCase()) {
+          if (type.toLowerCase() === UNITS[sizeUnitIndex].toLowerCase()) {
             break;
           }
           rhs *= 1000.0;
           sizeUnitIndex += 1;
         }
         break;
+      }
     }
 
     switch (operator) {
-      case ">":
+      case '>':
         return lhs > rhs;
-      case "<":
+      case '<':
         return lhs < rhs;
-      case ">=":
+      case '>=':
         return lhs >= rhs;
-      case "<=":
+      case '<=':
         return lhs <= rhs;
-      case "=":
-      case "==":
+      case '=':
+      case '==':
         return lhs === rhs;
-      case "!=":
+      case '!=':
         return lhs !== rhs;
       default:
         return false;
     }
-  } else {
-    // Filter based on name.
-    return unit.name.toLowerCase().includes(term);
   }
-}
+  // Filter based on name.
+  return unit.name.toLowerCase().includes(term);
+};
 
 window.drawTreemap = drawTreemap;
