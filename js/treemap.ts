@@ -159,12 +159,12 @@ const drawUnits = (
   for (const unit of units) {
     const { x, y, w, h } = unitBounds(unit, width, height);
 
-    let centerColor, outerColor;
+    let innerColor, outerColor;
     if (unit.fuzzy_match_percent == 100.0) {
-      centerColor = "hsl(120 100% 39%)";
+      innerColor = "hsl(120 100% 39%)";
       outerColor = "hsl(120 100% 17%)";
     } else {
-      centerColor = `color-mix(in srgb, hsl(221 0% 21%), hsl(221 50% 35%) ${unit.fuzzy_match_percent}%)`;
+      innerColor = `color-mix(in srgb, hsl(221 0% 21%), hsl(221 50% 35%) ${unit.fuzzy_match_percent}%)`;
       outerColor = `color-mix(in srgb, hsl(221 0% 5%), hsl(221 50% 15%) ${unit.fuzzy_match_percent}%)`;
     }
     const cx = x + (w * 0.4);
@@ -172,7 +172,7 @@ const drawUnits = (
     const r0 = (w + h) * 0.1;
     const r1 = (w + h) * 0.5;
     const gradient = ctx.createRadialGradient(cx, cy, r0, cx, cy, r1);
-    gradient.addColorStop(0, centerColor);
+    gradient.addColorStop(0, innerColor);
     gradient.addColorStop(1, outerColor);
     ctx.fillStyle = gradient;
 

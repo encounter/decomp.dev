@@ -1,4 +1,4 @@
-use palette::{Mix, Srgb};
+use palette::{FromColor, Hsl, Mix, Srgb};
 use streemap::Rect;
 
 pub fn layout_units<T, S, R>(items: &mut [T], aspect: f32, size_fn: S, mut set_rect_fn: R)
@@ -23,13 +23,20 @@ where
     });
 }
 
-fn rgb(r: u8, g: u8, b: u8) -> Srgb {
-    Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+fn hsl(h: u16, s: u8, l: u8) -> Srgb {
+    let hsl = Hsl::new(h as f32, s as f32 / 100.0, l as f32 / 100.0);
+    Srgb::from_color(hsl)
 }
 
 pub fn unit_color(fuzzy_match_percent: f32) -> String {
-    let red = rgb(42, 49, 64);
-    let green = rgb(0, 200, 0);
-    let (r, g, b) = red.mix(green, fuzzy_match_percent / 100.0).into_components();
+    let color;
+    if fuzzy_match_percent == 100.0 {
+        color = hsl(120, 100, 39);
+    } else {
+        let nonmatch = hsl(221, 0, 21);
+        let nearmatch = hsl(221, 50, 35);
+        color = nonmatch.mix(nearmatch, fuzzy_match_percent / 100.0);
+    }
+    let (r, g, b) = color.into_components();
     format!("#{:02x}{:02x}{:02x}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
