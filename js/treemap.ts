@@ -154,15 +154,17 @@ const drawUnits = (
 ) => {
   for (const unit of units) {
     const { x, y, w, h } = unitBounds(unit, width, height);
-    if (unit.filtered) {
-      ctx.globalAlpha = 0.1;
-    }
     ctx.fillStyle = unit.color;
     ctx.beginPath();
     ctx.rect(x, y, w, h);
+
+    ctx.stroke();
+
+    if (unit.filtered) {
+      ctx.globalAlpha = 0.1;
+    }
     ctx.fill();
     ctx.globalAlpha = 1.0;
-    ctx.stroke();
   }
 };
 
