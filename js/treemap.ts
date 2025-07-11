@@ -158,7 +158,12 @@ const drawUnits = (
     ctx.beginPath();
     ctx.rect(x, y, w, h);
 
+    ctx.save();
+    if (unit.filtered) {
+      ctx.clip();
+    }
     ctx.stroke();
+    ctx.restore();
 
     if (unit.filtered) {
       ctx.globalAlpha = 0.1;
