@@ -138,6 +138,10 @@ const setup = (
 ) => {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0); // Scale to device pixel ratio
   ctx.clearRect(0, 0, width, height);
+  // Clear the canvas with dark mode's background color, even in light mode.
+  // This is so that transparency doesn't make the canvas look bad in light mode.
+  ctx.fillStyle = "#181c25";
+  ctx.fillRect(0, 0, width, height);
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#000';
 };
@@ -149,14 +153,15 @@ const drawUnits = (
   height: number,
 ) => {
   for (const unit of units) {
-    if (!unit.visible) {
-      continue;
-    }
     const { x, y, w, h } = unitBounds(unit, width, height);
+    if (unit.filtered) {
+      ctx.globalAlpha = 0.1;
+    }
     ctx.fillStyle = unit.color;
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.fill();
+    ctx.globalAlpha = 1.0;
     ctx.stroke();
   }
 };
@@ -223,7 +228,7 @@ const findUnit = (
   let nearOverlapUnit = null;
   const epsilon = 3;
   for (const unit of units) {
-    if (!unit.visible) {
+    if (unit.filtered) {
       continue;
     }
     const { x, y, w, h } = unitBounds(unit, width, height);
@@ -264,7 +269,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     if (unit === hovered) {
       return;
     }
-    if (unit && !unit.visible) {
+    if (unit && unit.filtered) {
       canvas.style.cursor = 'default';
       hovered = null;
     } else {
@@ -293,9 +298,9 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     const terms = filter.toLowerCase().split(/\s+/);
     for (const unit of units) {
       if (terms.every(term => checkFilterTermMatches(term, unit))) {
-        unit.visible = true;
+        unit.filtered = false;
       } else {
-        unit.visible = false;
+        unit.filtered = true;
       }
     }
     dirty = true;
@@ -320,7 +325,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
   canvas.addEventListener('touchend', handleLeave);
   canvas.addEventListener('click', ({ clientX, clientY }) => {
     const unit = findUnit(canvas, units, clientX, clientY);
-    if (!unit || !unit.name || !unit.visible || !clickable) {
+    if (!unit || !unit.name || unit.filtered || !clickable) {
       return;
     }
     const url = new URL(window.location.href);

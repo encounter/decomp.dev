@@ -10,7 +10,7 @@ type Unit = {
   w: number;
   h: number;
   // Runtime fields
-  visible: boolean;
+  filtered: boolean;
 };
 
 type Measures = {
