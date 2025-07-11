@@ -11,7 +11,7 @@ where
     } else {
         Rect::from_size(aspect, 1.0)
     };
-    streemap::ordered_pivot_by_middle(rect, items, size_fn, |item, mut rect| {
+    streemap::binary(rect, items, size_fn, |item, mut rect| {
         if aspect > 1.0 {
             rect.y *= aspect;
             rect.h *= aspect;
