@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use decomp_dev_core::util::size;
+use decomp_dev_core::util::{format_percent, size};
 use image::ImageFormat;
 use objdiff_core::bindings::report::Measures;
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,6 @@ pub struct ShieldResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     label_color: Option<String>,
 }
-
-fn format_percent(value: f32) -> String { format!("{value:.2}%") }
 
 fn format_bytes(a: u64, b: u64) -> String {
     let mut a_buf = num_format::Buffer::default();

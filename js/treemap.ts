@@ -1,3 +1,5 @@
+import { formatPercent } from './util';
+
 const unitBounds = (unit: Unit, width: number, height: number) => {
   return {
     x: unit.x * width,
@@ -70,7 +72,7 @@ const drawTooltip = (
   }
   const text = ellipsize(
     ctx,
-    `${unit.name} • ${formatSize(unit.total_code)} • ${percent.toFixed(2)}%`,
+    `${unit.name} • ${formatSize(unit.total_code)} • ${formatPercent(unit.fuzzy_match_percent)}`,
     width,
   );
   const m = ctx.measureText(text);

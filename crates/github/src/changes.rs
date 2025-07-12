@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use anyhow::Result;
-use decomp_dev_core::models::Commit;
+use decomp_dev_core::{models::Commit, util::format_percent};
 use objdiff_core::bindings::report::{
     ChangeItem, ChangeItemInfo, ChangeUnit, Changes, Report, ReportItem, ReportUnit,
 };
@@ -130,8 +130,9 @@ fn measure_line_matched(
     to_percent: f32,
 ) -> String {
     let emoji = if to > from { "📈" } else { "📉" };
+    let to_percent_str = format_percent(to_percent);
     let percent_diff = to_percent - from_percent;
-    let percent_str = if percent_diff < 0.0 {
+    let percent_diff_str = if percent_diff < 0.0 {
         format!("{percent_diff:.2}%")
     } else {
         format!("+{percent_diff:.2}%")
@@ -141,7 +142,7 @@ fn measure_line_matched(
         Ordering::Less => bytes_diff.to_string(),
         Ordering::Equal | Ordering::Greater => format!("+{bytes_diff}"),
     };
-    format!("{emoji} **{name}**: {to_percent:.2}% ({percent_str}, {bytes_str} bytes)\n")
+    format!("{emoji} **{name}**: {to_percent_str} ({percent_diff_str}, {bytes_str} bytes)\n")
 }
 
 fn measure_line_bytes(name: &str, from: u64, to: u64) -> String {
@@ -189,19 +190,13 @@ fn output_line(line: &ChangeLine, out: &mut String) {
         Ordering::Greater => format!("+{}", line.bytes_diff),
     };
 
-    // Avoid showing 100% for nearly-matched functions due to rounding.
-    let mut from_percent = line.from_fuzzy_match_percent;
-    if from_percent > 99.99 && from_percent < 100.00 {
-        from_percent = 99.99;
-    }
-    let mut to_percent = line.to_fuzzy_match_percent;
-    if to_percent > 99.99 && to_percent < 100.00 {
-        to_percent = 99.99;
-    }
-
     out.push_str(&format!(
-        "| `{}` | `{}` | {} | {:.2}% | {:.2}% |\n",
-        line.unit_name, line.item_name, bytes_str, from_percent, to_percent,
+        "| `{}` | `{}` | {} | {} | {} |\n",
+        line.unit_name,
+        line.item_name,
+        bytes_str,
+        format_percent(line.from_fuzzy_match_percent),
+        format_percent(line.to_fuzzy_match_percent),
     ));
 }
 
