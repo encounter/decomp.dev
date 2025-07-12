@@ -37,7 +37,7 @@ pub fn unit_color(fuzzy_match_percent: f32) -> String {
         hsl(120, 100, 39)
     } else {
         let nonmatch = hsl(221, 0, 21);
-        let nearmatch = hsl(221, 50, 35);
+        let nearmatch = hsl(221, 100, 35);
         nonmatch.mix(nearmatch, fuzzy_match_percent / 100.0)
     })
 }
