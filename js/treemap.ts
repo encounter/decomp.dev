@@ -263,7 +263,7 @@ const findUnit = (
   const { width, height, left, top } = canvas.getBoundingClientRect();
   const mx = clientX - left;
   const my = clientY - top;
-  let nearOverlapUnit = null;
+  let nearOverlapUnit: Unit | null = null;
   const epsilon = 3;
   for (const unit of units) {
     if (unit.filtered) {
