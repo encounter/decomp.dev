@@ -27,13 +27,12 @@ pub fn render_svg(units: &[ReportTemplateUnit], w: u32, h: u32) -> String {
                         stop offset="0%" stop-color=(complete_c0) {}
                         stop offset="100%" stop-color=(complete_c1) {}
                     } @else {
-                        stop offset="0%" stop-color=(html_color(color_mix(hsl(221, 0, 21), hsl(221, 100, 35), pct / 100.0))) {}
-                        stop offset="100%" stop-color=(html_color(color_mix(hsl(221, 0, 5), hsl(221, 100, 15), pct / 100.0))) {}
+                        stop offset="0%" stop-color=(html_color(color_mix(hsl(200, 0, 21), hsl(200, 100, 35), pct / 100.0))) {}
+                        stop offset="100%" stop-color=(html_color(color_mix(hsl(200, 0, 15), hsl(200, 100, 15), pct / 100.0))) {}
                     }
                 }
             }
             @for (i, unit) in units.iter().enumerate() {
-                @let pct = unit.fuzzy_match_percent.floor();
                 rect.unit
                     width=(format!("{}%", unit.w * 100.0))
                     height=(format!("{}%", unit.h * 100.0))

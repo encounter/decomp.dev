@@ -166,8 +166,8 @@ const drawUnits = (
       innerColor = 'hsl(120 100% 39%)';
       outerColor = 'hsl(120 100% 17%)';
     } else {
-      innerColor = `color-mix(in srgb, hsl(221 0% 21%), hsl(221 100% 35%) ${unit.fuzzy_match_percent}%)`;
-      outerColor = `color-mix(in srgb, hsl(221 0% 5%), hsl(221 100% 15%) ${unit.fuzzy_match_percent}%)`;
+      innerColor = `color-mix(in srgb, hsl(200 0% 21%), hsl(200 100% 35%) ${unit.fuzzy_match_percent}%)`;
+      outerColor = `color-mix(in srgb, hsl(200 0% 15%), hsl(200 100% 15%) ${unit.fuzzy_match_percent}%)`;
     }
     const cx = x + w * 0.4;
     const cy = y + h * 0.4;
