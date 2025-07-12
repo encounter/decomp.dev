@@ -23,20 +23,26 @@ where
     });
 }
 
-fn hsl(h: u16, s: u8, l: u8) -> Srgb {
+pub fn hsl(h: u16, s: u8, l: u8) -> Srgb {
     let hsl = Hsl::new(h as f32, s as f32 / 100.0, l as f32 / 100.0);
     Srgb::from_color(hsl)
 }
 
+pub fn color_mix(c1: Srgb, c2: Srgb, percent: f32) -> Srgb {
+    c1.mix(c2, percent)
+}
+
 pub fn unit_color(fuzzy_match_percent: f32) -> String {
-    let color;
-    if fuzzy_match_percent == 100.0 {
-        color = hsl(120, 100, 39);
+    html_color(if fuzzy_match_percent == 100.0 {
+        hsl(120, 100, 39)
     } else {
         let nonmatch = hsl(221, 0, 21);
         let nearmatch = hsl(221, 50, 35);
-        color = nonmatch.mix(nearmatch, fuzzy_match_percent / 100.0);
-    }
-    let (r, g, b) = color.into_components();
+        nonmatch.mix(nearmatch, fuzzy_match_percent / 100.0)
+    })
+}
+
+pub fn html_color(c: Srgb) -> String {
+    let (r, g, b) = c.into_components();
     format!("#{:02x}{:02x}{:02x}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
