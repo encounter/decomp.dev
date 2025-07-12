@@ -12,6 +12,9 @@ function percentValue(
   _seriesIdx: number,
   _idx: number | null,
 ) {
+  if (rawValue > 99.99 && rawValue < 100.0) {
+    rawValue = 99.99;
+  }
   return rawValue == null ? '' : `${rawValue.toFixed(2)}%`;
 }
 

@@ -9,6 +9,8 @@ type Unit = {
   y: number;
   w: number;
   h: number;
+  // Runtime fields
+  filtered: boolean;
 };
 
 type Measures = {

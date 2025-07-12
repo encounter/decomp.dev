@@ -959,6 +959,9 @@ async fn render_report(
                             }
                         }
                     }
+                    label {
+                        input name="filter" required placeholder="Filter, e.g.: 'camera <70% >10kb'";
+                    }
                     @if units.is_empty() {
                         p.muted {
                             @if current_unit.is_some() {

@@ -1,4 +1,4 @@
-use palette::{Mix, Srgb};
+use palette::{FromColor, Hsl, Mix, Srgb};
 use streemap::Rect;
 
 pub fn layout_units<T, S, R>(items: &mut [T], aspect: f32, size_fn: S, mut set_rect_fn: R)
@@ -11,7 +11,7 @@ where
     } else {
         Rect::from_size(aspect, 1.0)
     };
-    streemap::ordered_pivot_by_middle(rect, items, size_fn, |item, mut rect| {
+    streemap::binary(rect, items, size_fn, |item, mut rect| {
         if aspect > 1.0 {
             rect.y *= aspect;
             rect.h *= aspect;
@@ -23,13 +23,26 @@ where
     });
 }
 
-fn rgb(r: u8, g: u8, b: u8) -> Srgb {
-    Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+pub fn hsl(h: u16, s: u8, l: u8) -> Srgb {
+    let hsl = Hsl::new(h as f32, s as f32 / 100.0, l as f32 / 100.0);
+    Srgb::from_color(hsl)
+}
+
+pub fn color_mix(c1: Srgb, c2: Srgb, percent: f32) -> Srgb {
+    c1.mix(c2, percent)
 }
 
 pub fn unit_color(fuzzy_match_percent: f32) -> String {
-    let red = rgb(42, 49, 64);
-    let green = rgb(0, 200, 0);
-    let (r, g, b) = red.mix(green, fuzzy_match_percent / 100.0).into_components();
+    html_color(if fuzzy_match_percent == 100.0 {
+        hsl(120, 100, 39)
+    } else {
+        let nonmatch = hsl(221, 0, 21);
+        let nearmatch = hsl(221, 100, 35);
+        nonmatch.mix(nearmatch, fuzzy_match_percent / 100.0)
+    })
+}
+
+pub fn html_color(c: Srgb) -> String {
+    let (r, g, b) = c.into_components();
     format!("#{:02x}{:02x}{:02x}", (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
