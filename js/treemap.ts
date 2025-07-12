@@ -350,6 +350,13 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
       return;
     }
     updateFilter(evt.currentTarget.value);
+    const url = new URL(window.location.href);
+    if (evt.currentTarget.value) {
+      url.searchParams.set('filter', evt.currentTarget.value);
+    } else {
+      url.searchParams.delete('filter');
+    }
+    window.history.replaceState({}, '', url);
   };
 
   canvas.addEventListener('mousemove', (e) => {
@@ -369,6 +376,7 @@ const drawTreemap = (id: string, clickable: boolean, units: Unit[]) => {
     }
     const url = new URL(window.location.href);
     url.searchParams.set('unit', unit.name);
+    url.searchParams.delete('filter');
     window.location.href = url.toString();
   });
   const filterInput = document.querySelector('input[name="filter"]');
@@ -456,3 +464,15 @@ const checkFilterTermMatches = (term: string, unit: Unit): boolean => {
 };
 
 window.drawTreemap = drawTreemap;
+
+(function () {
+  const url = new URL(window.location.href);
+  const filterFromUrl = url.searchParams.get('filter');
+  if (filterFromUrl) {
+    const filterInput = document.querySelector('input[name="filter"]');
+    if (filterInput && filterInput instanceof HTMLInputElement) {
+      filterInput.value = filterFromUrl;
+      filterInput.scrollIntoView();
+    }
+  }
+})();
