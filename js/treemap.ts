@@ -66,10 +66,6 @@ const drawTooltip = (
   ctx.textBaseline = 'middle';
 
   const { x, y, w, h } = unitBounds(unit, width, height);
-  let percent = unit.fuzzy_match_percent;
-  if (percent > 99.99 && percent < 100.0) {
-    percent = 99.99;
-  }
   const text = ellipsize(
     ctx,
     `${unit.name} • ${formatSize(unit.total_code)} • ${formatPercent(unit.fuzzy_match_percent)}`,
