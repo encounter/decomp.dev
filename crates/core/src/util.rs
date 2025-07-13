@@ -71,3 +71,12 @@ pub fn size(value: u64) -> String {
     }
     format!("{:.2} {}", value, units[unit])
 }
+
+/// Formats a progress percentage as a string, and prevents partial matches from being rounded to 0.00% or 100.00%.
+pub fn format_percent(value: f32) -> String {
+    let mut value = value;
+    if value > 0.0 && value < 100.0 {
+        value = value.clamp(0.01, 99.99);
+    }
+    format!("{value:.2}%")
+}

@@ -11,7 +11,7 @@ use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
     models::{FullReportFile, ProjectInfo, ProjectVisibility, project_visibility},
-    util::{UrlExt, size},
+    util::{UrlExt, format_percent, size},
 };
 use decomp_dev_images::{
     badge,
@@ -781,7 +781,7 @@ async fn render_report(
                     link rel="next" href=(next_commit_path);
                 }
                 meta name="description" content=(format!("Decompilation progress report for {project_name}"));
-                meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
+                meta property="og:title" content=(format!("{project_short_name_with_label} is {} decompiled", format_percent(measures.matched_code_percent)));
                 meta property="og:description" content=(format!("Decompilation progress report for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);
@@ -861,9 +861,9 @@ async fn render_report(
                         span.icon-github { " " }
                         span.md { "Repository" }
                     }
-                    h3.report-title { (format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent)) }
+                    h3.report-title { (format!("{project_short_name_with_label} is {} decompiled", format_percent(measures.matched_code_percent))) }
                     @if current_unit.is_none() && measures.complete_code_percent > 0.0 {
-                        h4.muted { (format!("{:.2}% fully linked", measures.complete_code_percent)) }
+                        h4.muted { (format!("{} fully linked", format_percent(measures.complete_code_percent))) }
                     }
                     @if let Some(source_file_url) = source_file_url {
                         h4.muted {
@@ -1079,7 +1079,7 @@ async fn render_history(
                 (ctx.chunks("history", Load::Preload).await)
                 link rel="canonical" href=(canonical_url);
                 meta name="description" content=(format!("Decompilation progress history for {project_name}"));
-                meta property="og:title" content=(format!("{project_short_name_with_label} is {:.2}% decompiled", measures.matched_code_percent));
+                meta property="og:title" content=(format!("{project_short_name_with_label} is {} decompiled", format_percent(measures.matched_code_percent)));
                 meta property="og:description" content=(format!("Decompilation progress history for {project_name}"));
                 meta property="og:image" content=(image_url);
                 meta property="og:url" content=(canonical_url);

@@ -1,4 +1,5 @@
 import uPlot from 'uplot';
+import { formatPercent } from './util';
 
 const height = 400;
 const stroke = '#a9a9b3';
@@ -12,10 +13,7 @@ function percentValue(
   _seriesIdx: number,
   _idx: number | null,
 ) {
-  if (rawValue > 99.99 && rawValue < 100.0) {
-    rawValue = 99.99;
-  }
-  return rawValue == null ? '' : `${rawValue.toFixed(2)}%`;
+  return rawValue == null ? '' : formatPercent(rawValue);
 }
 
 function renderChart(id: string, data: ReportHistoryEntry[]) {
