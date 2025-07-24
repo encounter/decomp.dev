@@ -233,7 +233,7 @@ async fn handle_workflow_run_completed(
                 duration.as_millis()
             );
         }
-    } else if workflow_run.event == "pull_request" {
+    } else if let "pull_request" | "pull_request_target" = workflow_run.event.as_str() {
         if !project_info.project.enable_pr_comments {
             return Ok(());
         }

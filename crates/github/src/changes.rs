@@ -332,8 +332,10 @@ pub fn generate_comment(
             ChangeKind::BrokenMatch
         } else if to.fuzzy_match_percent > from.fuzzy_match_percent {
             ChangeKind::Improvement
-        } else {
+        } else if from.fuzzy_match_percent > 0.0 {
             ChangeKind::Regression
+        } else {
+            continue; // No change
         };
         let from_bytes = ((from.fuzzy_match_percent as f64 / 100.0) * from.size as f64) as u64;
         let to_bytes = ((to.fuzzy_match_percent as f64 / 100.0) * to.size as f64) as u64;
