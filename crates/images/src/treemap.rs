@@ -28,9 +28,7 @@ pub fn hsl(h: u16, s: u8, l: u8) -> Srgb {
     Srgb::from_color(hsl)
 }
 
-pub fn color_mix(c1: Srgb, c2: Srgb, percent: f32) -> Srgb {
-    c1.mix(c2, percent)
-}
+pub fn color_mix(c1: Srgb, c2: Srgb, percent: f32) -> Srgb { c1.mix(c2, percent) }
 
 pub fn unit_color(fuzzy_match_percent: f32) -> String {
     html_color(if fuzzy_match_percent == 100.0 {

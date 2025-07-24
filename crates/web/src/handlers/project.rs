@@ -14,7 +14,7 @@ use decomp_dev_core::{
         CachedReportFile, Commit, Platform, ProjectInfo, ProjectVisibility, ReportInner,
         project_visibility,
     },
-    util::{UrlExt, size},
+    util::{UrlExt, format_percent, size},
 };
 use maud::{DOCTYPE, Markup, html};
 use objdiff_core::bindings::report::Measures;
@@ -413,11 +413,11 @@ fn project_fragment(
                     (size(ctx.measures.total_code))
                     " total code"
                 } @else {
-                    (format!("{:.2}%", ctx.measures.matched_code_percent))
+                    (format_percent(ctx.measures.matched_code_percent))
                     " decompiled"
                     @if ctx.measures.complete_code_percent > 0.0 {
                         " | "
-                        (format!("{:.2}%", ctx.measures.complete_code_percent))
+                        (format_percent(ctx.measures.complete_code_percent))
                         " fully linked"
                     }
                 }

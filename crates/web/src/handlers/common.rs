@@ -13,7 +13,10 @@ use axum::{
     response::{IntoResponseParts, ResponseParts},
 };
 use decomp_dev_auth::CurrentUser;
-use decomp_dev_core::{AppError, util::size};
+use decomp_dev_core::{
+    AppError,
+    util::{format_percent, size},
+};
 use maud::{Markup, PreEscaped, Render, html};
 use objdiff_core::bindings::report::Measures;
 use regex::Regex;
@@ -305,8 +308,8 @@ impl TemplateContext {
                 "progress-section",
                 measures.complete_code_percent - current_percent,
                 format!(
-                    "{:.2}% fully linked ({})",
-                    measures.complete_code_percent,
+                    "{} fully linked ({})",
+                    format_percent(measures.complete_code_percent),
                     size(measures.complete_code)
                 ),
             );
@@ -317,8 +320,8 @@ impl TemplateContext {
                 if current_percent > 0.0 { "progress-section striped" } else { "progress-section" },
                 measures.matched_code_percent - current_percent,
                 format!(
-                    "{:.2}% perfect match ({})",
-                    measures.matched_code_percent,
+                    "{} perfect match ({})",
+                    format_percent(measures.matched_code_percent),
                     size(measures.matched_code)
                 ),
             );
@@ -328,7 +331,7 @@ impl TemplateContext {
             out.push(
                 "progress-section striped fuzzy",
                 measures.fuzzy_match_percent - current_percent,
-                format!("{:.2}% fuzzy match", measures.fuzzy_match_percent),
+                format!("{} fuzzy match", format_percent(measures.fuzzy_match_percent)),
             );
         }
         out
@@ -345,8 +348,8 @@ impl TemplateContext {
                 "progress-section",
                 measures.complete_data_percent - current_percent,
                 format!(
-                    "{:.2}% fully linked ({})",
-                    measures.complete_data_percent,
+                    "{} fully linked ({})",
+                    format_percent(measures.complete_data_percent),
                     size(measures.complete_data)
                 ),
             );
@@ -357,8 +360,8 @@ impl TemplateContext {
                 if current_percent > 0.0 { "progress-section striped" } else { "progress-section" },
                 measures.matched_data_percent - current_percent,
                 format!(
-                    "{:.2}% perfect match ({})",
-                    measures.matched_data_percent,
+                    "{} perfect match ({})",
+                    format_percent(measures.matched_data_percent),
                     size(measures.matched_data)
                 ),
             );
