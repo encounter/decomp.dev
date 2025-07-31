@@ -19,7 +19,7 @@ For more information, see the [wiki](https://wiki.decomp.dev/tools/decomp-dev).
    ```bash
    cp config.example.yml config.yml
    ```
-4. [Create a new GitHub personal access token](https://github.com/settings/tokens/new?description=decomp.dev&scopes=repo,workflow,write:discussion) with scopes `workflow`, `write:discussion`. Set it in `config.yml`:
+4. [Create a new GitHub personal access token](https://github.com/settings/tokens/new?description=decomp.dev&scopes=public_repo) with scope `public_repo`. Set it in `config.yml`:
     ```yaml
     github:
       token: ghp_abcd1234abcd1234abcd1234abcd1234abcd
