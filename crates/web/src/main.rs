@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 mod cron;
 mod frogress;
 mod handlers;

@@ -262,7 +262,6 @@ pub async fn get_report(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn mode_overview(
     scope: &Scope<'_>,
     state: &AppState,
@@ -301,7 +300,6 @@ async fn mode_overview(
     Err(AppError::Status(StatusCode::NOT_ACCEPTABLE))
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn mode_report(
     scope: &Scope<'_>,
     state: &AppState,

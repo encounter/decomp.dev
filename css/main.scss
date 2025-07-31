@@ -264,7 +264,8 @@ $progress-height: 2rem;
       background-color: $jade-500;
     }
 
-    .progress-section:nth-of-type(3) {
+    .progress-section:nth-of-type(3),
+    .progress-section.fuzzy {
       background-color: transparent;
     }
   }
@@ -547,4 +548,49 @@ details.dropdown {
 
 label:has(> input[type="checkbox"]) {
   margin-bottom: var(--pico-spacing);
+}
+
+.platform-grid {
+  margin-top: calc(var(--pico-block-spacing-vertical) * -2);
+}
+
+.platform-dropdown {
+  margin: 0;
+
+  li.platform-item {
+    display: flex;
+    padding: 0 !important;
+    flex: 1;
+
+    label {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      margin: 0;
+      padding-inline-start: var(--pico-spacing);
+
+      .platform-icon {
+        color: var(--pico-form-element-color);
+        font-size: 2em;
+      }
+    }
+
+    button {
+      padding: 0.25em 0.5em;
+      margin: 0.25em;
+      margin-inline-end: var(--pico-spacing);
+    }
+
+    .count-badge {
+      font-size: 0.8em;
+      background: var(--pico-code-kbd-background-color);
+      color: var(--pico-code-kbd-color);
+      border-radius: 1em;
+      min-width: 1.5em;
+      height: 1.5em;
+      padding: 0 0.5em;
+      text-align: center;
+    }
+  }
 }

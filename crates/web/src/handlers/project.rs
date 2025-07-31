@@ -11,11 +11,12 @@ use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError, FullUri,
     models::{
-        CachedReportFile, Commit, Platform, ProjectInfo, ProjectVisibility, ReportInner,
-        project_visibility,
+        ALL_PLATFORMS, CachedReportFile, Commit, Platform, ProjectInfo, ProjectVisibility,
+        ReportInner, project_visibility,
     },
     util::{UrlExt, format_percent, size},
 };
+use itertools::Itertools;
 use maud::{DOCTYPE, Markup, html};
 use objdiff_core::bindings::report::Measures;
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,7 @@ struct ProjectInfoContext {
 #[derive(Deserialize)]
 pub struct ProjectsQuery {
     sort: Option<String>,
+    platform: Option<String>,
 }
 
 #[derive(Serialize, Copy, Clone)]
@@ -157,7 +159,36 @@ pub async fn get_projects(
         return Err(AppError::Status(StatusCode::NOT_ACCEPTABLE));
     }
 
-    let projects = state.db.get_projects().await?;
+    let platforms = query
+        .platform
+        .as_deref()
+        .into_iter()
+        .flat_map(|s| s.split(','))
+        .filter_map(|s| Platform::from_str(s).ok())
+        .sorted()
+        .dedup()
+        .collect::<Vec<_>>();
+    let show_all = platforms.is_empty() || platforms == ALL_PLATFORMS;
+
+    let mut projects = state.db.get_projects().await?;
+
+    let available_platforms = projects
+        .iter()
+        .filter_map(|p| p.project.platform.as_deref())
+        .filter_map(|s| Platform::from_str(s).ok())
+        .sorted()
+        .dedup_with_count()
+        .collect::<Vec<_>>();
+    if !show_all {
+        projects.retain(|p| {
+            p.project
+                .platform
+                .as_deref()
+                .and_then(|p| Platform::from_str(p).ok())
+                .is_some_and(|p| platforms.contains(&p))
+        });
+    }
+
     let mut out = projects
         .iter()
         .map(|p| ProjectInfoContext {
@@ -261,7 +292,17 @@ pub async fn get_projects(
         if (mime.type_() == mime::STAR && mime.subtype() == mime::STAR)
             || (mime.type_() == mime::TEXT && mime.subtype() == mime::HTML)
         {
-            return render_project(ctx, out, uri, current_sort, current_user.as_ref()).await;
+            return render_project(
+                ctx,
+                out,
+                uri,
+                current_sort,
+                current_user.as_ref(),
+                &available_platforms,
+                &platforms,
+                show_all,
+            )
+            .await;
         } else if mime.type_() == mime::APPLICATION && mime.subtype() == mime::JSON {
             let projects = out
                 .into_iter()
@@ -285,6 +326,9 @@ async fn render_project(
     uri: Uri,
     current_sort: SortOption,
     current_user: Option<&CurrentUser>,
+    available_platforms: &[(usize, Platform)],
+    platforms: &[Platform],
+    show_all: bool,
 ) -> Result<Response, AppError> {
     let mut combined_styles = ProgressSections { nonce: ctx.nonce.clone(), ..Default::default() };
     for info in &mut out {
@@ -293,6 +337,7 @@ async fn render_project(
 
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
     let canonical_url = request_url.with_path("/projects");
+    let is_primary_view = show_all && current_sort.key == "updated";
 
     let rendered = html! {
         (DOCTYPE)
@@ -302,12 +347,17 @@ async fn render_project(
                 title { "Projects • decomp.dev" }
                 (ctx.header().await)
                 (ctx.chunks("main", Load::Deferred).await)
+                (ctx.chunks("projects", Load::Deferred).await)
                 link rel="canonical" href=(canonical_url);
                 meta name="description" content="Decompilation progress reports";
                 meta property="og:title" content="Decompilation progress reports";
                 meta property="og:description" content="Progress reports for matching decompilation projects";
                 meta property="og:image" content=(canonical_url.with_path("/og.png"));
                 meta property="og:url" content=(canonical_url);
+                @if !is_primary_view {
+                    // Prevent search engines from indexing anything but the primary view
+                    meta name="robots" content="noindex";
+                }
             }
             body {
                 header {
@@ -318,20 +368,6 @@ async fn render_project(
                             }
                             li {
                                 a href="/projects" { "Projects" }
-                            }
-                            li.md {
-                                details.dropdown {
-                                    summary { (current_sort.name) }
-                                    ul {
-                                        @for option in SORT_OPTIONS {
-                                            li {
-                                                a href=(request_url.query_param("sort", Some(option.key))) {
-                                                    (option.name)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
                         (nav_links())
@@ -349,13 +385,45 @@ async fn render_project(
                     }
                 }
                 main {
-                    details.dropdown.sm {
-                        summary { (current_sort.name) }
-                        ul {
-                            @for option in SORT_OPTIONS {
+                    .grid.platform-grid {
+                        details.dropdown.platform-dropdown {
+                            summary {
+                                @if show_all {
+                                    "All Platforms"
+                                } @else if platforms.len() == 1 {
+                                    (platforms[0].name())
+                                } @else {
+                                    (platforms.len()) " Platforms"
+                                }
+                            }
+                            ul {
                                 li {
-                                    a href=(request_url.query_param("sort", Some(option.key))) {
-                                        (option.name)
+                                    a href=(request_url.query_param("platform", None)) {
+                                        "All Platforms"
+                                    }
+                                }
+                                @for (n, platform) in available_platforms {
+                                    li.platform-item {
+                                        label {
+                                            input type="checkbox" name="platform" value=(platform.to_str())
+                                                checked[show_all || platforms.contains(platform)];
+                                            span.platform-icon.(format!("icon-{}", platform.to_str())) {}
+                                            (platform.name())
+                                            span.count-badge { (n) }
+                                        }
+                                        button.secondary { "Only" }
+                                    }
+                                }
+                            }
+                        }
+                        details.dropdown {
+                            summary { (current_sort.name) }
+                            ul {
+                                @for option in SORT_OPTIONS {
+                                    li {
+                                        a href=(request_url.query_param("sort", Some(option.key))) {
+                                            (option.name)
+                                        }
                                     }
                                 }
                             }
@@ -382,13 +450,14 @@ fn project_fragment(
     let Some(commit) = ctx.report.as_ref().map(|r| r.commit.clone()) else {
         return Markup::default();
     };
-    let project_path = canonical_url.with_path(&format!("/{}/{}", project.owner, project.repo));
+    let mut project_path = canonical_url.with_path(&format!("/{}/{}", project.owner, project.repo));
+    project_path.set_query(None);
     let commit_url =
         format!("https://github.com/{}/{}/commit/{}", project.owner, project.repo, commit.sha);
     let header_image_id = project.header_image_id.map(hex::encode);
     const HEADER_QUERY: &str = "?w=1024&h=256";
     html! {
-        article.project {
+        article.project data-platform=[project.platform.as_deref()] {
             a.project-link href=(project_path) aria-label="View project" {}
             @if let Some(header_image_id) = header_image_id {
                 .project-image-container {

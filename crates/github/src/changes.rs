@@ -224,7 +224,7 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
         } else {
             out.push_str("<details>\n");
         }
-        out.push_str(&format!("<summary>{emoji} {total_changes} {description}:</summary>\n"));
+        out.push_str(&format!("<summary>{emoji} {total_changes} {description}</summary>\n"));
         out.push('\n'); // Must include a blank line before a table
         out.push_str("| Unit | Function | Bytes | Before | After |\n");
         out.push_str("| - | - | - | - | - |\n");

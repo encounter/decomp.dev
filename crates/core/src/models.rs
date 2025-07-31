@@ -156,57 +156,53 @@ pub struct FrogressMapping {
     pub project_measure: String,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Platform {
-    GBA,
-    GBC,
-    N64,
-    DS,
-    PS,
-    PS2,
-    Switch,
-    GC,
-    Wii,
+    PS,     // 1994
+    N64,    // 1996
+    PS2,    // 2000
+    GBA,    // 2001
+    GC,     // 2001
+    DS,     // 2004
+    Wii,    // 2006
+    Switch, // 2017
 }
 
 pub const ALL_PLATFORMS: &[Platform] = &[
-    Platform::GBA,
-    Platform::GBC,
-    Platform::N64,
-    Platform::DS,
     Platform::PS,
+    Platform::N64,
     Platform::PS2,
-    Platform::Switch,
+    Platform::GBA,
     Platform::GC,
+    Platform::DS,
     Platform::Wii,
+    Platform::Switch,
 ];
 
 impl Platform {
     pub fn to_str(self) -> &'static str {
         match self {
-            Self::GBA => "gba",
-            Self::GBC => "gbc",
-            Self::N64 => "n64",
-            Self::DS => "nds",
             Self::PS => "ps",
+            Self::N64 => "n64",
             Self::PS2 => "ps2",
-            Self::Switch => "switch",
+            Self::GBA => "gba",
             Self::GC => "gc",
+            Self::DS => "nds",
             Self::Wii => "wii",
+            Self::Switch => "switch",
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Platform::GBA => "Game Boy Advance",
-            Platform::GBC => "Game Boy Color",
-            Platform::N64 => "Nintendo 64",
-            Platform::DS => "Nintendo DS",
             Platform::PS => "PlayStation",
+            Platform::N64 => "Nintendo 64",
             Platform::PS2 => "PlayStation 2",
-            Platform::Switch => "Nintendo Switch",
+            Platform::GBA => "Game Boy Advance",
             Platform::GC => "GameCube",
+            Platform::DS => "Nintendo DS",
             Platform::Wii => "Wii",
+            Platform::Switch => "Switch",
         }
     }
 }
@@ -216,15 +212,14 @@ impl FromStr for Platform {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "gba" => Ok(Self::GBA),
-            "gbc" => Ok(Self::GBC),
-            "n64" => Ok(Self::N64),
-            "nds" => Ok(Self::DS),
             "ps" => Ok(Self::PS),
+            "n64" => Ok(Self::N64),
             "ps2" => Ok(Self::PS2),
-            "switch" => Ok(Self::Switch),
+            "gba" => Ok(Self::GBA),
             "gc" => Ok(Self::GC),
+            "nds" => Ok(Self::DS),
             "wii" => Ok(Self::Wii),
+            "switch" => Ok(Self::Switch),
             _ => Err(()),
         }
     }

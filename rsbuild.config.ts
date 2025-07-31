@@ -12,6 +12,7 @@ export default defineConfig({
       manage: ['./js/manage.ts'],
       report: ['./js/treemap.ts'],
       api: ['./js/api.tsx'],
+      projects: ['./js/projects.ts'],
     },
   },
   output: {
