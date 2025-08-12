@@ -166,12 +166,41 @@ fn measure_line_simple(name: &str, from: u64, to: u64) -> String {
 const MAX_CHANGE_LINES: usize = 30;
 
 // Note: The order the tables are printed in is determined by the order of the variants in this enum.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
 enum ChangeKind {
     NewMatch,
     BrokenMatch,
     Improvement,
     Regression,
+}
+
+impl ChangeKind {
+    fn emoji(self) -> &'static str {
+        match self {
+            ChangeKind::NewMatch => "✅",
+            ChangeKind::BrokenMatch => "💔",
+            ChangeKind::Improvement => "📈",
+            ChangeKind::Regression => "📉",
+        }
+    }
+
+    fn singular_description(self) -> &'static str {
+        match self {
+            ChangeKind::NewMatch => "new match",
+            ChangeKind::BrokenMatch => "broken match",
+            ChangeKind::Improvement => "improvement in unmatched functions",
+            ChangeKind::Regression => "regression in unmatched functions",
+        }
+    }
+
+    fn plural_description(self) -> &'static str {
+        match self {
+            ChangeKind::NewMatch => "new matches",
+            ChangeKind::BrokenMatch => "broken matches",
+            ChangeKind::Improvement => "improvements in unmatched functions",
+            ChangeKind::Regression => "regressions in unmatched functions",
+        }
+    }
 }
 
 struct ChangeLine {
@@ -206,25 +235,25 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
         changes_by_kind.entry(change.kind.clone()).or_insert(vec![]).push(change);
     }
     for (change_kind, mut changes) in changes_by_kind {
-        let (emoji, description) = match change_kind {
-            ChangeKind::NewMatch => ("✅", "new matches"),
-            ChangeKind::BrokenMatch => ("💔", "broken matches"),
-            ChangeKind::Improvement => ("📈", "improvements in unmatched functions"),
-            ChangeKind::Regression => ("📉", "regressions in unmatched functions"),
-        };
-
         let total_changes = changes.len();
-        if total_changes == 0 {
-            out.push_str(&format!("No {description}.\n"));
+        let description = if total_changes == 0 {
+            out.push_str(&format!("No {}.\n", change_kind.plural_description()));
             continue;
-        }
+        } else if total_changes == 1 {
+            change_kind.singular_description()
+        } else {
+            change_kind.plural_description()
+        };
 
         if change_kind == ChangeKind::BrokenMatch {
             out.push_str("<details open>\n");
         } else {
             out.push_str("<details>\n");
         }
-        out.push_str(&format!("<summary>{emoji} {total_changes} {description}</summary>\n"));
+        out.push_str(&format!(
+            "<summary>{} {total_changes} {description}</summary>\n",
+            change_kind.emoji()
+        ));
         out.push('\n'); // Must include a blank line before a table
         out.push_str("| Unit | Function | Bytes | Before | After |\n");
         out.push_str("| - | - | - | - | - |\n");

@@ -22,7 +22,8 @@ use decomp_dev_github::{
 };
 use itertools::Itertools;
 use maud::{DOCTYPE, Markup, html};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use tower_sessions::Session;
 
 use crate::{
     AppState,
@@ -339,6 +340,7 @@ pub async fn manage_project(
     State(state): State<AppState>,
     current_user: CurrentUser,
     ctx: TemplateContext,
+    session: Session,
 ) -> Result<Response, AppError> {
     let Some(info) = state.db.get_project_info(&params.owner, &params.repo, None).await? else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
@@ -361,10 +363,12 @@ pub async fn manage_project(
     } else {
         None
     };
-    render_manage_project(ctx, &state, &info, report.as_ref(), &current_user, Message::None).await
+    render_manage_project(ctx, &state, &info, report.as_ref(), &current_user, session).await
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
 enum Message {
+    #[default]
     None,
     Info(String),
     Error(String),
@@ -388,7 +392,7 @@ async fn render_manage_project(
     project_info: &ProjectInfo,
     latest_report: Option<&CachedReportFile>,
     current_user: &CurrentUser,
-    message: Message,
+    session: Session,
 ) -> Result<Response, AppError> {
     let project_short_name = project_info.project.short_name();
     let project_manage_path =
@@ -408,6 +412,11 @@ async fn render_manage_project(
     } else {
         None
     };
+
+    let message = session
+        .remove::<Message>(&format!("manage_{}_message", project_info.project.id))
+        .await?
+        .unwrap_or_default();
 
     // Check if the project is hidden based on matched code percentage
     let visibility =
@@ -635,10 +644,10 @@ pub async fn manage_project_save(
 }
 
 pub async fn manage_project_refresh(
-    ctx: TemplateContext,
     Path(params): Path<ProjectParams>,
     State(state): State<AppState>,
     current_user: CurrentUser,
+    session: Session,
 ) -> Result<Response, AppError> {
     let Some(info) = state.db.get_project_info(&params.owner, &params.repo, None).await? else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
@@ -658,20 +667,40 @@ pub async fn manage_project_refresh(
                 Message::Error(format!("Failed to refresh project: {e}"))
             }
         };
+    session.insert(&format!("manage_{}_message", info.project.id), message).await?;
+    let redirect_url = format!("/manage/{}/{}", params.owner, params.repo);
+    Ok(Redirect::to(&redirect_url).into_response())
+}
 
-    let report = if let (Some(version), Some(commit)) = (info.default_version(), &info.commit) {
-        state
-            .db
-            .get_report(&info.project.owner, &info.project.repo, &commit.sha, version)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to fetch report for {}/{} sha {} version {}",
-                    info.project.owner, info.project.repo, commit.sha, version
-                )
-            })?
-    } else {
-        None
+#[derive(Deserialize)]
+pub struct DeleteCommitParams {
+    #[serde(flatten)]
+    project: ProjectParams,
+    commit: String,
+}
+
+pub async fn delete_commit(
+    Path(params): Path<DeleteCommitParams>,
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+    session: Session,
+) -> Result<Response, AppError> {
+    let Some(info) =
+        state.db.get_project_info(&params.project.owner, &params.project.repo, None).await?
+    else {
+        return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    render_manage_project(ctx, &state, &info, report.as_ref(), &current_user, message).await
+    if !current_user.can_manage_repo(info.project.id) {
+        return Err(AppError::Status(StatusCode::FORBIDDEN));
+    }
+    let num_reports_deleted =
+        state.db.delete_reports_by_commit(info.project.id, &params.commit).await?;
+    let message = if num_reports_deleted > 0 {
+        Message::Info(format!("Deleted {num_reports_deleted} reports"))
+    } else {
+        Message::Error("No reports found. Is the commit SHA correct?".to_string())
+    };
+    session.insert(&format!("manage_{}_message", info.project.id), message).await?;
+    let redirect_url = format!("/manage/{}/{}", params.project.owner, params.project.repo);
+    Ok(Redirect::to(&redirect_url).into_response())
 }

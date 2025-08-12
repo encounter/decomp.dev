@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            DELETE FROM reports\n            WHERE project_id = ? AND git_commit = ? COLLATE NOCASE\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4f0ac4223f5bcedc2f382bdd76fdbcb415496435223f87cc40583b82c3ea2bbd"
+}

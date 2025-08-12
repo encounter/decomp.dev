@@ -1106,6 +1106,35 @@ impl Database {
         }
         Ok(())
     }
+
+    pub async fn delete_reports_by_commit(
+        &self,
+        project_id: u64,
+        commit_sha: &str,
+    ) -> Result<usize> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        let deleted_count = sqlx::query!(
+            r#"
+            DELETE FROM reports
+            WHERE project_id = ? AND git_commit = ? COLLATE NOCASE
+            "#,
+            project_id_db,
+            commit_sha,
+        )
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+        if deleted_count > 0 {
+            tracing::info!(
+                "Deleted {} reports for project ID {} commit {}",
+                deleted_count,
+                project_id,
+                commit_sha
+            );
+        }
+        Ok(deleted_count as usize)
+    }
 }
 
 thread_local! {
