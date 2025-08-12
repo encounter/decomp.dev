@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT version\n            FROM reports JOIN projects ON reports.project_id = projects.id\n            WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE\n                  AND git_commit = ? COLLATE NOCASE\n            ORDER BY version\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "version",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cad10eac152f1f6ab49343a232b493d5599fe2f99367c8d88652be15a6491f74"
+}

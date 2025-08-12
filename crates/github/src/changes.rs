@@ -285,6 +285,23 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
     }
 }
 
+pub fn generate_missing_report_comment(
+    version: &str,
+    from_commit: Option<&Commit>,
+    to_commit: Option<&Commit>,
+) -> String {
+    format!(
+        "### Report for {} ({} - {})\n\n[!] Report not found. Did the build succeed?\n\n",
+        version,
+        from_commit.map_or("<none>", |c| &c.sha[..7]),
+        to_commit.map_or("<none>", |c| &c.sha[..7])
+    )
+}
+
+pub fn generate_combined_comment(version_comments: Vec<String>) -> String {
+    version_comments.join("---\n\n")
+}
+
 pub fn generate_comment(
     from: &Report,
     to: &Report,
@@ -389,4 +406,40 @@ pub fn generate_comment(
         comment.push_str("No changes\n");
     }
     comment
+}
+
+#[cfg(test)]
+mod tests {
+    use decomp_dev_core::models::Commit;
+    use time::UtcDateTime;
+
+    use super::*;
+
+    #[test]
+    fn test_generate_missing_report_comment() {
+        let commit = Commit {
+            sha: "abc1234567890".to_string(),
+            message: Some("Test commit".to_string()),
+            timestamp: UtcDateTime::UNIX_EPOCH,
+        };
+        let comment = generate_missing_report_comment("GALE01", Some(&commit), Some(&commit));
+        assert_eq!(
+            comment,
+            "### Report for GALE01 (abc1234 - abc1234)\n\n[!] Report not found. Did the build succeed?\n\n"
+        );
+    }
+
+    #[test]
+    fn test_commit_sha_truncation() {
+        let long_commit = Commit {
+            sha: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            message: Some("Long commit SHA".to_string()),
+            timestamp: UtcDateTime::UNIX_EPOCH,
+        };
+        let comment =
+            generate_missing_report_comment("GALE01", Some(&long_commit), Some(&long_commit));
+        // Should truncate SHA to 7 characters
+        assert!(comment.contains("(abcdef1 - abcdef1)"));
+        assert!(!comment.contains("abcdef1234567890"));
+    }
 }

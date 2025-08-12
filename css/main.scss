@@ -594,3 +594,7 @@ label:has(> input[type="checkbox"]) {
     }
   }
 }
+
+.mt-spacing {
+  margin-top: var(--pico-spacing);
+}

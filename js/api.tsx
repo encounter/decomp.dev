@@ -1,6 +1,6 @@
-import { StrictMode, useState, useEffect, useMemo, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
 import hljs from 'highlight.js/lib/core';
+import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
 import 'highlight.js/styles/hybrid.css';
 import styles from './api.module.css';
 

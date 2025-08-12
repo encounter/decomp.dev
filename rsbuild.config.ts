@@ -1,7 +1,7 @@
 import { defineConfig } from '@rsbuild/core';
+import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSass } from '@rsbuild/plugin-sass';
 import { pluginTypeCheck } from '@rsbuild/plugin-type-check';
-import { pluginReact } from '@rsbuild/plugin-react';
 
 export default defineConfig({
   source: {

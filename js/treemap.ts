@@ -463,7 +463,7 @@ const checkFilterTermMatches = (term: string, unit: Unit): boolean => {
 
 window.drawTreemap = drawTreemap;
 
-(function () {
+(() => {
   const url = new URL(window.location.href);
   const filterFromUrl = url.searchParams.get('filter');
   if (filterFromUrl) {

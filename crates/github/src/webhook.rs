@@ -28,7 +28,10 @@ use sha2::Sha256;
 
 use crate::{
     GitHub, ProcessWorkflowRunResult,
-    changes::{generate_changes, generate_comment},
+    changes::{
+        generate_changes, generate_combined_comment, generate_comment,
+        generate_missing_report_comment,
+    },
     commit_from_head_commit, process_workflow_run,
 };
 
@@ -290,8 +293,22 @@ async fn handle_workflow_run_completed(
             let issues = client.issues_by_id(repository_id);
             // Only fetch first page for now
             let existing_comments = issues.list_comments(pull_request.number).send().await?;
+
+            // Get all versions that exist on the base branch to check for missing reports
+            let base_versions = state
+                .db
+                .get_versions_for_commit(
+                    &project_info.project.owner,
+                    &project_info.project.repo,
+                    &base_commit.sha,
+                )
+                .await?;
+
+            let mut version_comments = Vec::new();
+
+            // Process existing artifacts from PR
             for artifact in &artifacts {
-                let Some(cached_report) = state
+                let cached_report = state
                     .db
                     .get_report(
                         &project_info.project.owner,
@@ -299,45 +316,76 @@ async fn handle_workflow_run_completed(
                         &base_commit.sha,
                         &artifact.version,
                     )
-                    .await?
-                else {
+                    .await?;
+
+                if let Some(cached_report) = cached_report {
+                    let report_file = state.db.upgrade_report(&cached_report).await?;
+                    let report = report_file.report.flatten();
+                    let changes = generate_changes(&report, &artifact.report)?;
+                    version_comments.push(generate_comment(
+                        &report,
+                        &artifact.report,
+                        Some(&report_file.version),
+                        Some(&report_file.commit),
+                        Some(&commit),
+                        changes,
+                    ));
+                } else {
                     tracing::warn!(
-                        "No report found for pull request {} (base {}) and version {}",
+                        "No base report found for pull request {} (base {}) and version {}",
                         pull_request.id,
                         pull_request.base.sha,
                         artifact.version
                     );
-                    continue;
-                };
-                let report_file = state.db.upgrade_report(&cached_report).await?;
-                let report = report_file.report.flatten();
-                let changes = generate_changes(&report, &artifact.report)?;
-                let comment_text = generate_comment(
-                    &report,
-                    &artifact.report,
-                    Some(&report_file.version),
-                    Some(&report_file.commit),
-                    Some(&commit),
-                    changes,
-                );
-                let existing_comment = existing_comments
+                    version_comments.push(generate_missing_report_comment(
+                        &artifact.version,
+                        Some(&base_commit),
+                        Some(&commit),
+                    ));
+                }
+            }
+
+            // Check for versions that exist on base but are missing from PR
+            for base_version in &base_versions {
+                if !artifacts.iter().any(|a| a.version == *base_version) {
+                    version_comments.push(generate_missing_report_comment(
+                        base_version,
+                        Some(&base_commit),
+                        Some(&commit),
+                    ));
+                }
+            }
+
+            if !version_comments.is_empty() {
+                let combined_comment = generate_combined_comment(version_comments);
+
+                // Find the first existing comment that contains "Report for" any version
+                let existing_report_comments: Vec<_> = existing_comments
                     .items
                     .iter()
-                    .find(|comment| {
+                    .filter(|comment| {
                         // TODO check author ID
-                        comment.body.as_ref().is_some_and(|body| {
-                            body.contains(format!("Report for {}", artifact.version).as_str())
-                        })
+                        comment.body.as_ref().is_some_and(|body| body.contains("### Report for "))
                     })
-                    .map(|comment| comment.id);
-                if let Some(existing_comment) = existing_comment {
+                    .collect();
+
+                if let Some(first_comment) = existing_report_comments.first() {
+                    // Update the first comment
                     issues
-                        .update_comment(existing_comment, comment_text)
+                        .update_comment(first_comment.id, combined_comment)
                         .await
                         .context("Failed to update existing comment")?;
+
+                    // Delete any additional report comments
+                    for comment in existing_report_comments.iter().skip(1) {
+                        if let Err(e) = issues.delete_comment(comment.id).await {
+                            tracing::warn!("Failed to delete old comment {}: {}", comment.id, e);
+                        }
+                    }
                 } else {
+                    // Create new comment
                     issues
-                        .create_comment(pull_request.number, comment_text)
+                        .create_comment(pull_request.number, combined_comment)
                         .await
                         .context("Failed to create comment")?;
                 }

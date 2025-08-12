@@ -180,6 +180,33 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_versions_for_commit(
+        &self,
+        owner: &str,
+        repo: &str,
+        commit: &str,
+    ) -> Result<Vec<String>> {
+        let mut conn = self.pool.acquire().await?;
+        let versions = sqlx::query!(
+            r#"
+            SELECT version
+            FROM reports JOIN projects ON reports.project_id = projects.id
+            WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE
+                  AND git_commit = ? COLLATE NOCASE
+            ORDER BY version
+            "#,
+            owner,
+            repo,
+            commit
+        )
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .map(|row| row.version)
+        .collect();
+        Ok(versions)
+    }
+
     pub async fn get_report(
         &self,
         owner: &str,

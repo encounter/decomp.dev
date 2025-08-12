@@ -553,6 +553,16 @@ async fn render_manage_project(
                             small { "Fetches any missing report artifacts." }
                         }
                     }
+                    form.mt-spacing action=(format!("/manage/{}/{}/delete-commit", project_info.project.owner, project_info.project.repo)) method="post" data-loading="Deleting..." {
+                        label {
+                            "Delete reports"
+                            fieldset role="group" {
+                                input name="commit_sha" type="text" placeholder="Full commit SHA (40 characters)" pattern="[a-f0-9]{40}" required;
+                                button.outline type="submit" { "Delete" }
+                            }
+                            small { "Delete all reports for a specific commit. Must be the full 40-character SHA." }
+                        }
+                    }
                 }
             }
             (ctx.footer(Some(current_user)))
@@ -673,20 +683,19 @@ pub async fn manage_project_refresh(
 }
 
 #[derive(Deserialize)]
-pub struct DeleteCommitParams {
-    #[serde(flatten)]
-    project: ProjectParams,
-    commit: String,
+pub struct DeleteCommitForm {
+    commit_sha: String,
 }
 
 pub async fn delete_commit(
-    Path(params): Path<DeleteCommitParams>,
+    Path(params): Path<ProjectParams>,
     State(state): State<AppState>,
     current_user: CurrentUser,
     session: Session,
+    Form(form): Form<DeleteCommitForm>,
 ) -> Result<Response, AppError> {
     let Some(info) =
-        state.db.get_project_info(&params.project.owner, &params.project.repo, None).await?
+        state.db.get_project_info(&params.owner, &params.repo, None).await?
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
@@ -694,13 +703,13 @@ pub async fn delete_commit(
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
     let num_reports_deleted =
-        state.db.delete_reports_by_commit(info.project.id, &params.commit).await?;
+        state.db.delete_reports_by_commit(info.project.id, &form.commit_sha).await?;
     let message = if num_reports_deleted > 0 {
         Message::Info(format!("Deleted {num_reports_deleted} reports"))
     } else {
         Message::Error("No reports found. Is the commit SHA correct?".to_string())
     };
     session.insert(&format!("manage_{}_message", info.project.id), message).await?;
-    let redirect_url = format!("/manage/{}/{}", params.project.owner, params.project.repo);
+    let redirect_url = format!("/manage/{}/{}", params.owner, params.repo);
     Ok(Redirect::to(&redirect_url).into_response())
 }

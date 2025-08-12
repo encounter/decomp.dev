@@ -5,7 +5,7 @@ use axum::{
     extract::{DefaultBodyLimit, Request},
     http::{HeaderMap, HeaderValue, header, header::Entry},
     response::Response,
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use decomp_dev_images::image_mime_from_ext;
 use mime::Mime;
@@ -69,7 +69,7 @@ pub fn build_router() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(50 * 1000 * 1000 /* 50MB */)),
         )
         .route("/manage/{owner}/{repo}/refresh", post(manage::manage_project_refresh))
-        .route("/manage/{owner}/{repo}/commit/{commit}", delete(manage::delete_commit))
+        .route("/manage/{owner}/{repo}/delete-commit", post(manage::delete_commit))
         .route("/og.png", get(decomp_dev_images::get_og))
         .route("/", get(project::get_projects))
         .route("/projects", get(project::get_projects))
