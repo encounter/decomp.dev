@@ -2,7 +2,7 @@
 
 Decompilation progress website & GitHub bot.
 
-For more information, see the [wiki](https://wiki.decomp.dev/tools/decomp-dev).
+For more information, see the [wiki](https://decomp.wiki/tools/decomp-dev).
 
 ## Backend Setup
 

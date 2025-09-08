@@ -379,7 +379,7 @@ async fn render_project(
                             " that compiles to the same binary as the original."
                             " All source code is written from scratch."
                             footer {
-                                a href="https://wiki.decomp.dev/" { "Learn more" }
+                                a href="https://decomp.wiki/" { "Learn more" }
                             }
                         }
                     }

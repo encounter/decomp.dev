@@ -421,7 +421,7 @@ pub fn nav_links() -> Markup {
                 a href="https://ghidra.decomp.dev" { "Ghidra" }
             }
             li {
-                a href="https://wiki.decomp.dev" { "Wiki" }
+                a href="https://decomp.wiki" { "Wiki" }
             }
             li {
                 a #theme-toggle .icon-theme-light-dark href="#" title="Toggle theme" {}
