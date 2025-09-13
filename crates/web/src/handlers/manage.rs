@@ -694,9 +694,7 @@ pub async fn delete_commit(
     session: Session,
     Form(form): Form<DeleteCommitForm>,
 ) -> Result<Response, AppError> {
-    let Some(info) =
-        state.db.get_project_info(&params.owner, &params.repo, None).await?
-    else {
+    let Some(info) = state.db.get_project_info(&params.owner, &params.repo, None).await? else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
     if !current_user.can_manage_repo(info.project.id) {

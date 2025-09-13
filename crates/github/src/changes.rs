@@ -232,7 +232,7 @@ fn output_line(line: &ChangeLine, out: &mut String) {
 fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
     let mut changes_by_kind = BTreeMap::new();
     for change in changes {
-        changes_by_kind.entry(change.kind.clone()).or_insert(vec![]).push(change);
+        changes_by_kind.entry(change.kind).or_insert(vec![]).push(change);
     }
     for (change_kind, mut changes) in changes_by_kind {
         let total_changes = changes.len();

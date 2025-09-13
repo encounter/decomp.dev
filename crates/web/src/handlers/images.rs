@@ -131,7 +131,7 @@ pub async fn get_image(
 
 fn extract_extension(params: ImageParams) -> (ImageParams, Option<String>) {
     if let Some((id, ext)) = params.id.rsplit_once('.') {
-        return (ImageParams { id: id.to_string(), ..params }, Some(ext.to_string()));
+        return (ImageParams { id: id.to_string() }, Some(ext.to_string()));
     }
     (params, None)
 }

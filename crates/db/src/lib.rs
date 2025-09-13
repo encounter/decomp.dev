@@ -806,21 +806,11 @@ impl Database {
 
     pub async fn cleanup_report_units(&self) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        conn.execute("PRAGMA foreign_keys = OFF").await?;
         let mut tx = conn.begin().await?;
         let deleted_reports = sqlx::query!(
             r#"
             DELETE FROM reports
             WHERE project_id NOT IN (SELECT id FROM projects)
-            "#,
-        )
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        let deleted_report_report_units = sqlx::query!(
-            r#"
-            DELETE FROM report_report_units
-            WHERE report_id NOT IN (SELECT id FROM reports)
             "#,
         )
         .execute(&mut *tx)
@@ -836,13 +826,11 @@ impl Database {
         .await?
         .rows_affected();
         tx.commit().await?;
-        conn.execute("PRAGMA foreign_keys = ON").await?;
-        if deleted_reports > 0 || deleted_report_units > 0 || deleted_report_report_units > 0 {
+        if deleted_reports > 0 || deleted_report_units > 0 {
             tracing::info!(
-                "Deleted {} orphaned reports, {} orphaned report units and {} orphaned mappings",
+                "Deleted {} orphaned reports and {} orphaned report units",
                 deleted_reports,
                 deleted_report_units,
-                deleted_report_report_units,
             );
         }
         Ok(())
@@ -1112,7 +1100,6 @@ impl Database {
 
     pub async fn cleanup_images(&self) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
-        conn.execute("PRAGMA foreign_keys = OFF").await?;
         let mut tx = conn.begin().await?;
         let deleted_images = sqlx::query!(
             r#"
@@ -1127,7 +1114,6 @@ impl Database {
         .await?
         .rows_affected();
         tx.commit().await?;
-        conn.execute("PRAGMA foreign_keys = ON").await?;
         if deleted_images > 0 {
             tracing::info!("Deleted {} orphaned images", deleted_images);
         }
