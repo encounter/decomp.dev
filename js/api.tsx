@@ -110,11 +110,13 @@ const ProjectForm = () => {
     project: string | null;
     version: string | null;
     category: string | null;
+    subcategory: string | null;
   };
   const [selected, setSelected] = useState<Selected>({
     project: null,
     version: null,
     category: null,
+    subcategory: null,
   });
   const [mode, setMode] = useState('overview');
   const [format, setFormat] = useState('json');
@@ -124,6 +126,25 @@ const ProjectForm = () => {
   const [currentProject, setCurrentProject] = useState<ProjectResponse | null>(
     null,
   );
+
+  const categories = useMemo(() => {
+    const result: Record<
+      string,
+      { name: string; subcategories: CategoryResponse[] }
+    > = {};
+    currentProject?.report_categories.forEach((c) => {
+      const [top, sub] = c.id.split('.', 2);
+      if (!result[top]) {
+        result[top] = { name: c.id === top ? c.name : top, subcategories: [] };
+      }
+      if (sub) {
+        result[top].subcategories.push({ id: sub, name: c.name });
+      } else {
+        result[top].name = c.name;
+      }
+    });
+    return result;
+  }, [currentProject]);
 
   useEffect(() => {
     setLoadingProjects(true);
@@ -142,6 +163,7 @@ const ProjectForm = () => {
               project: project.id,
               version: null,
               category: null,
+              subcategory: null,
             });
           }
         }
@@ -186,7 +208,10 @@ const ProjectForm = () => {
       }
     }
     if (selected.category) {
-      url.searchParams.append('category', selected.category);
+      const cat = selected.subcategory
+        ? `${selected.category}.${selected.subcategory}`
+        : selected.category;
+      url.searchParams.append('category', cat);
     }
   }
   url.pathname += `.${format}`;
@@ -374,6 +399,7 @@ const ProjectForm = () => {
                 project: e.target.value,
                 version: null,
                 category: null,
+                subcategory: null,
               })
             }
           >
@@ -396,6 +422,7 @@ const ProjectForm = () => {
                 project: existing.project,
                 version: e.target.value,
                 category: null,
+                subcategory: null,
               }))
             }
           >
@@ -417,19 +444,46 @@ const ProjectForm = () => {
               setSelected((existing) => ({
                 project: existing.project,
                 version: existing.version,
-                category: e.target.value,
+                category: e.target.value || null,
+                subcategory: null,
               }))
             }
           >
             <option value="">Default</option>
-            {currentProject?.report_categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
+            {Object.entries(categories).map(([id, info]) => (
+              <option key={id} value={id}>
+                {info.name}
               </option>
             ))}
           </select>
         </label>
       </div>
+      {selected.category &&
+        categories[selected.category]?.subcategories.length > 0 && (
+          <div className="grid">
+            <label>
+              Subcategory
+              <select
+                name="subcategory"
+                value={selected.subcategory || ''}
+                disabled={loadingProject || !currentProject}
+                onChange={(e) =>
+                  setSelected((existing) => ({
+                    ...existing,
+                    subcategory: e.target.value || null,
+                  }))
+                }
+              >
+                <option value="">Default</option>
+                {categories[selected.category].subcategories.map((sub) => (
+                  <option key={sub.id} value={sub.id}>
+                    {sub.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
       <div className="grid">
         <label>
           Mode

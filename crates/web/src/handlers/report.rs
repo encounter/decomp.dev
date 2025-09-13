@@ -1,4 +1,4 @@
-use std::{borrow::Cow, iter};
+use std::borrow::Cow;
 
 use anyhow::{Context, Result};
 use axum::{
@@ -84,6 +84,85 @@ struct ReportCategoryItem<'a> {
     id: &'a str,
     name: &'a str,
     path: String,
+}
+
+#[derive(Serialize, Clone)]
+struct ReportCategoryGroup<'a> {
+    category: ReportCategoryItem<'a>,
+    subcategories: Vec<ReportCategoryItem<'a>>,
+}
+
+struct CategorySelection<'a> {
+    categories: Vec<ReportCategoryGroup<'a>>,
+    current_top_index: usize,
+    current_sub_index: Option<usize>,
+}
+
+fn build_category_selection<'a>(
+    canonical_url: &Url,
+    report_categories: &'a [ReportCategory],
+    current_category: Option<&'a ReportCategory>,
+    default_category: &str,
+) -> CategorySelection<'a> {
+    let all_url =
+        canonical_url.query_param("category", if default_category == "all" { None } else { Some("all") });
+    let all_category =
+        ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
+
+    let mut categories = vec![ReportCategoryGroup { category: all_category, subcategories: Vec::new() }];
+
+    for c in report_categories {
+        if let Some((parent_id, _)) = c.id.split_once('.') {
+            let path =
+                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
+            if let Some(group) = categories.iter_mut().find(|g| g.category.id == parent_id) {
+                group.subcategories.push(ReportCategoryItem { id: &c.id, name: &c.name, path });
+            } else {
+                let parent_path = canonical_url
+                    .query_param("category", Some(parent_id))
+                    .path_and_query()
+                    .to_string();
+                categories.push(ReportCategoryGroup {
+                    category: ReportCategoryItem {
+                        id: parent_id,
+                        name: parent_id,
+                        path: parent_path,
+                    },
+                    subcategories: vec![ReportCategoryItem { id: &c.id, name: &c.name, path }],
+                });
+            }
+        } else {
+            let path =
+                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
+            if let Some(group) = categories.iter_mut().find(|g| g.category.id == c.id) {
+                group.category.name = &c.name;
+                group.category.path = path;
+            } else {
+                categories.push(ReportCategoryGroup {
+                    category: ReportCategoryItem { id: &c.id, name: &c.name, path },
+                    subcategories: Vec::new(),
+                });
+            }
+        }
+    }
+
+    let current_category_id = current_category.map(|c| c.id.as_str()).unwrap_or("all");
+    let (current_top_id, current_sub_id) = current_category_id
+        .split_once('.')
+        .map(|(top, _)| (top, Some(current_category_id)))
+        .unwrap_or((current_category_id, None));
+    let current_top_index = categories
+        .iter()
+        .position(|c| c.category.id == current_top_id)
+        .unwrap_or(0);
+    let current_sub_index = current_sub_id.and_then(|id| {
+        categories[current_top_index]
+            .subcategories
+            .iter()
+            .position(|sc| sc.id == id)
+    });
+
+    CategorySelection { categories, current_top_index, current_sub_index }
 }
 
 #[derive(Serialize, Clone)]
@@ -598,8 +677,9 @@ async fn render_report(
     current_user: Option<CurrentUser>,
     mut ctx: TemplateContext,
 ) -> Result<Response, AppError> {
-    let Scope { report, project_info, measures, current_category, current_unit, units, label } =
+    let Scope { report, project_info, measures, current_category: current_category_ref, current_unit, units, label } =
         scope;
+    let current_category = *current_category_ref;
 
     let mut commit_message = report.commit.message.clone();
     if commit_message.is_none() {
@@ -689,24 +769,12 @@ async fn render_report(
         })
         .collect::<Vec<_>>();
 
-    let all_url = canonical_url
-        .query_param("category", if default_category == "all" { None } else { Some("all") });
-    let all_category =
-        ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
-    let current_category = current_category
-        .map(|c| {
-            let path =
-                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
-            ReportCategoryItem { id: &c.id, name: &c.name, path }
-        })
-        .unwrap_or_else(|| all_category.clone());
-    let categories = iter::once(all_category)
-        .chain(report.report.categories.iter().map(|c| {
-            let path =
-                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
-            ReportCategoryItem { id: &c.id, name: &c.name, path }
-        }))
-        .collect::<Vec<_>>();
+    let CategorySelection { categories, current_top_index, current_sub_index } =
+        build_category_selection(&canonical_url, &report.report.categories, current_category, default_category);
+    let current_top_category = &categories[current_top_index];
+    let current_category_item = current_sub_index
+        .map(|i| &current_top_category.subcategories[i])
+        .unwrap_or(&current_top_category.category);
 
     let prev_commit_path = project_info.prev_commit.as_deref().map(|commit| {
         let url = request_url.with_path(&format!(
@@ -946,11 +1014,26 @@ async fn render_report(
                         h6 { "Units" }
                         @if categories.len() > 1 {
                             details.dropdown {
-                                summary { (current_category.name) }
+                                summary { (current_top_category.category.name) }
                                 ul {
                                     @for category in &categories {
                                         li {
-                                            a href=(category.path) { (category.name) }
+                                            a href=(category.category.path) { (category.category.name) }
+                                        }
+                                    }
+                                }
+                            }
+                            @if current_top_category.subcategories.len() > 0 {
+                                details.dropdown {
+                                    summary { (current_category_item.name) }
+                                    ul {
+                                        li {
+                                            a href=(current_top_category.category.path) { (current_top_category.category.name) }
+                                        }
+                                        @for sub in &current_top_category.subcategories {
+                                            li {
+                                                a href=(sub.path) { (sub.name) }
+                                            }
                                         }
                                     }
                                 }
@@ -999,8 +1082,9 @@ async fn render_history(
     mut ctx: TemplateContext,
     result: Vec<ReportHistoryEntry>,
 ) -> Result<Response, AppError> {
-    let Scope { report, project_info, measures, current_category, current_unit, units: _, label } =
+    let Scope { report, project_info, measures, current_category: current_category_ref, current_unit, units: _, label } =
         scope;
+    let current_category = *current_category_ref;
 
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
     let project_base_path =
@@ -1025,30 +1109,13 @@ async fn render_history(
         })
         .collect::<Vec<_>>();
 
-    let all_url = canonical_url.query_param(
-        "category",
-        if project_info.project.default_category.as_deref().is_none_or(|c| c == "all") {
-            None
-        } else {
-            Some("all")
-        },
-    );
-    let all_category =
-        ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
-    let current_category = current_category
-        .map(|c| {
-            let path =
-                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
-            ReportCategoryItem { id: &c.id, name: &c.name, path }
-        })
-        .unwrap_or_else(|| all_category.clone());
-    let categories = iter::once(all_category)
-        .chain(report.report.categories.iter().map(|c| {
-            let path =
-                canonical_url.query_param("category", Some(&c.id)).path_and_query().to_string();
-            ReportCategoryItem { id: &c.id, name: &c.name, path }
-        }))
-        .collect::<Vec<_>>();
+    let default_category = project_info.project.default_category();
+    let CategorySelection { categories, current_top_index, current_sub_index } =
+        build_category_selection(&canonical_url, &report.report.categories, current_category, default_category);
+    let current_top_category = &categories[current_top_index];
+    let current_category_item = current_sub_index
+        .map(|i| &current_top_category.subcategories[i])
+        .unwrap_or(&current_top_category.category);
 
     let project_name = if let Some(label) = label {
         Cow::Owned(format!("{} ({})", project_info.project.name(), label))
@@ -1116,11 +1183,26 @@ async fn render_history(
                     }
                     @if current_unit.is_none() && categories.len() > 1 {
                         details.dropdown title="Category" {
-                            summary { (current_category.name) }
+                            summary { (current_top_category.category.name) }
                             ul {
                                 @for category in &categories {
                                     li {
-                                        a href=(category.path) { (category.name) }
+                                        a href=(category.category.path) { (category.category.name) }
+                                    }
+                                }
+                            }
+                        }
+                        @if current_top_category.subcategories.len() > 0 {
+                            details.dropdown title="Subcategory" {
+                                summary { (current_category_item.name) }
+                                ul {
+                                    li {
+                                        a href=(current_top_category.category.path) { (current_top_category.category.name) }
+                                    }
+                                    @for sub in &current_top_category.subcategories {
+                                        li {
+                                            a href=(sub.path) { (sub.name) }
+                                        }
                                     }
                                 }
                             }
