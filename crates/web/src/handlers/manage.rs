@@ -13,7 +13,7 @@ use decomp_dev_auth::CurrentUser;
 use decomp_dev_core::{
     AppError,
     models::{
-        ALL_PLATFORMS, CachedReportFile, Project, ProjectInfo, ProjectVisibility,
+        ALL_PLATFORMS, CachedReportFile, Project, ProjectInfo, ProjectVisibility, PullReportStyle,
         project_visibility,
     },
 };
@@ -513,6 +513,16 @@ async fn render_manage_project(
                                     " (requires GitHub App installation)"
                                 }
                             }
+                            label {
+                                "PR report style"
+                                select name="pr_report_style" disabled[installation_id.is_none()] {
+                                    option value="comment" selected[project_info.project.pr_report_style == PullReportStyle::Comment] { "Comment" }
+                                    option value="description" selected[project_info.project.pr_report_style == PullReportStyle::Description] { "Description" }
+                                }
+                                @if installation_id.is_none() {
+                                    " (requires GitHub App installation)"
+                                }
+                            }
                             hr;
                             label {
                                 "Hero image "
@@ -579,6 +589,7 @@ pub struct ProjectForm {
     pub default_version: Option<String>,
     pub workflow_id: String,
     pub enable_pr_comments: Option<String>,
+    pub pr_report_style: Option<String>,
     pub header_image: Option<Bytes>,
     pub clear_header_image: Option<String>,
     pub enabled: Option<String>,
@@ -644,6 +655,14 @@ pub async fn manage_project_save(
             form.enable_pr_comments.is_some_and(|v| v == "on")
         } else {
             project_info.project.enable_pr_comments
+        },
+        pr_report_style: if installation_id.is_some() {
+            match form.pr_report_style.as_deref() {
+                Some("description") => PullReportStyle::Description,
+                _ => PullReportStyle::Comment,
+            }
+        } else {
+            project_info.project.pr_report_style
         },
         header_image_id,
         enabled: form.enabled.is_some_and(|v| v == "on"),

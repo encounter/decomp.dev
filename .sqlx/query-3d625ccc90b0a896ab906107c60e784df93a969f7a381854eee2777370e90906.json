@@ -1,68 +1,79 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, header_image_id, enabled\n            FROM projects\n            WHERE id = ?\n            ",
+  "query": "\n            SELECT id AS \"id!\", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, pr_report_style AS \"pr_report_style!\", header_image_id, enabled\n            FROM projects\n            WHERE owner = ? COLLATE NOCASE AND repo = ? COLLATE NOCASE\n            ",
   "describe": {
     "columns": [
       {
-        "name": "owner",
+        "name": "id!",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "repo",
+        "name": "owner",
         "ordinal": 1,
         "type_info": "Text"
       },
       {
-        "name": "name",
+        "name": "repo",
         "ordinal": 2,
         "type_info": "Text"
       },
       {
-        "name": "short_name",
+        "name": "name",
         "ordinal": 3,
         "type_info": "Text"
       },
       {
-        "name": "default_category",
+        "name": "short_name",
         "ordinal": 4,
         "type_info": "Text"
       },
       {
-        "name": "default_version",
+        "name": "default_category",
         "ordinal": 5,
         "type_info": "Text"
       },
       {
-        "name": "platform",
+        "name": "default_version",
         "ordinal": 6,
         "type_info": "Text"
       },
       {
-        "name": "workflow_id",
+        "name": "platform",
         "ordinal": 7,
         "type_info": "Text"
       },
       {
-        "name": "enable_pr_comments",
+        "name": "workflow_id",
         "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "enable_pr_comments",
+        "ordinal": 9,
         "type_info": "Bool"
       },
       {
+        "name": "pr_report_style!",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
         "name": "header_image_id",
-        "ordinal": 9,
+        "ordinal": 11,
         "type_info": "Blob"
       },
       {
         "name": "enabled",
-        "ordinal": 10,
+        "ordinal": 12,
         "type_info": "Bool"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
+      true,
       false,
       false,
       true,
@@ -71,10 +82,11 @@
       true,
       true,
       true,
+      false,
       false,
       true,
       false
     ]
   },
-  "hash": "d66c20bc973f3199c05ca1e7f2e3b87cb3bf82646329034caeea9c48d9586823"
+  "hash": "3d625ccc90b0a896ab906107c60e784df93a969f7a381854eee2777370e90906"
 }
