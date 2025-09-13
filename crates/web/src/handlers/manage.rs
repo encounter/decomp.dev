@@ -516,8 +516,9 @@ async fn render_manage_project(
                             label {
                                 "PR report style"
                                 select name="pr_report_style" disabled[installation_id.is_none()] {
-                                    option value="comment" selected[project_info.project.pr_report_style == PullReportStyle::Comment] { "Comment" }
-                                    option value="description" selected[project_info.project.pr_report_style == PullReportStyle::Description] { "Description" }
+                                    @for &style in PullReportStyle::variants() {
+                                        option value=(style.as_str()) selected[project_info.project.pr_report_style == style] { (style) }
+                                    }
                                 }
                                 @if installation_id.is_none() {
                                     " (requires GitHub App installation)"
@@ -657,10 +658,7 @@ pub async fn manage_project_save(
             project_info.project.enable_pr_comments
         },
         pr_report_style: if installation_id.is_some() {
-            match form.pr_report_style.as_deref() {
-                Some("description") => PullReportStyle::Description,
-                _ => PullReportStyle::Comment,
-            }
+            form.pr_report_style.as_deref().and_then(|s| s.parse().ok()).unwrap_or_default()
         } else {
             project_info.project.pr_report_style
         },

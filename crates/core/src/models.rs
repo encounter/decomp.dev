@@ -1,4 +1,4 @@
-use std::{borrow::Cow, str::FromStr, sync::Arc};
+use std::{borrow::Cow, fmt, str::FromStr, sync::Arc};
 
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
 use serde::Serialize;
@@ -7,18 +7,17 @@ use time::UtcDateTime;
 // BLAKE3 hash of the image data
 pub type ImageId = [u8; 32];
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PullReportStyle {
+    #[default]
     Comment,
     Description,
 }
 
-impl Default for PullReportStyle {
-    fn default() -> Self { Self::Comment }
-}
-
 impl PullReportStyle {
+    pub const fn variants() -> &'static [Self] { &[Self::Comment, Self::Description] }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Comment => "comment",
@@ -36,6 +35,15 @@ impl FromStr for PullReportStyle {
             "description" => Ok(Self::Description),
             _ => Err(()),
         }
+    }
+}
+
+impl fmt::Display for PullReportStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Comment => "Comment",
+            Self::Description => "Description",
+        })
     }
 }
 
