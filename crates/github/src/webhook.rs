@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use decomp_dev_core::{AppError, config::GitHubConfig};
+use decomp_dev_core::{AppError, config::GitHubConfig, models::PullReportStyle};
 use decomp_dev_db::Database;
 use hmac::{Hmac, Mac};
 use octocrab::{
@@ -290,9 +290,6 @@ async fn handle_workflow_run_completed(
                 continue;
             }
             tracing::info!("Processing pull request {}", pull_request.id);
-            let issues = client.issues_by_id(repository_id);
-            // Only fetch first page for now
-            let existing_comments = issues.list_comments(pull_request.number).send().await?;
 
             // Get all versions that exist on the base branch to check for missing reports
             let base_versions = state
@@ -359,35 +356,81 @@ async fn handle_workflow_run_completed(
             if !version_comments.is_empty() {
                 let combined_comment = generate_combined_comment(version_comments);
 
-                // Find the first existing comment that contains "Report for" any version
-                let existing_report_comments: Vec<_> = existing_comments
-                    .items
-                    .iter()
-                    .filter(|comment| {
-                        // TODO check author ID
-                        comment.body.as_ref().is_some_and(|body| body.contains("### Report for "))
-                    })
-                    .collect();
-
-                if let Some(first_comment) = existing_report_comments.first() {
-                    // Update the first comment
-                    issues
-                        .update_comment(first_comment.id, combined_comment)
-                        .await
-                        .context("Failed to update existing comment")?;
-
-                    // Delete any additional report comments
-                    for comment in existing_report_comments.iter().skip(1) {
-                        if let Err(e) = issues.delete_comment(comment.id).await {
-                            tracing::warn!("Failed to delete old comment {}: {}", comment.id, e);
+                if project_info.project.pr_report_style == PullReportStyle::Description {
+                    let pulls =
+                        client.pulls(&project_info.project.owner, &project_info.project.repo);
+                    let pull = pulls.get(pull_request.number).await?;
+                    let start_marker = "<!-- decomp.dev report start -->";
+                    let end_marker = "<!-- decomp.dev report end -->";
+                    let new_section = format!("{start_marker}\n{combined_comment}\n{end_marker}");
+                    let existing_body = pull.body.unwrap_or_default();
+                    let new_body = if let Some(start_idx) = existing_body.find(start_marker) {
+                        if let Some(end_rel) = existing_body[start_idx..].find(end_marker) {
+                            let end_idx = start_idx + end_rel + end_marker.len();
+                            format!(
+                                "{}{}{}",
+                                &existing_body[..start_idx],
+                                new_section,
+                                &existing_body[end_idx..]
+                            )
+                        } else {
+                            format!("{existing_body}\n\n---\n\n{new_section}")
                         }
-                    }
-                } else {
-                    // Create new comment
-                    issues
-                        .create_comment(pull_request.number, combined_comment)
+                    } else if existing_body.trim().is_empty() {
+                        new_section
+                    } else {
+                        format!("{}\n\n---\n\n{}", existing_body.trim(), new_section)
+                    };
+
+                    pulls
+                        .update(pull_request.number)
+                        .body(new_body)
+                        .send()
                         .await
-                        .context("Failed to create comment")?;
+                        .context("Failed to update pull request body")?;
+                } else {
+                    let issues = client.issues_by_id(repository_id);
+                    // Only fetch first page for now
+                    let existing_comments =
+                        issues.list_comments(pull_request.number).send().await?;
+
+                    // Find the first existing comment that contains "Report for" any version
+                    let existing_report_comments: Vec<_> = existing_comments
+                        .items
+                        .iter()
+                        .filter(|comment| {
+                            // TODO check author ID
+                            comment
+                                .body
+                                .as_ref()
+                                .is_some_and(|body| body.contains("### Report for "))
+                        })
+                        .collect();
+
+                    if let Some(first_comment) = existing_report_comments.first() {
+                        // Update the first comment
+                        issues
+                            .update_comment(first_comment.id, combined_comment.clone())
+                            .await
+                            .context("Failed to update existing comment")?;
+
+                        // Delete any additional report comments
+                        for comment in existing_report_comments.iter().skip(1) {
+                            if let Err(e) = issues.delete_comment(comment.id).await {
+                                tracing::warn!(
+                                    "Failed to delete old comment {}: {}",
+                                    comment.id,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        // Create new comment
+                        issues
+                            .create_comment(pull_request.number, combined_comment)
+                            .await
+                            .context("Failed to create comment")?;
+                    }
                 }
             }
         }

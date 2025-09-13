@@ -1,4 +1,4 @@
-use std::{borrow::Cow, str::FromStr, sync::Arc};
+use std::{borrow::Cow, fmt, str::FromStr, sync::Arc};
 
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
 use serde::Serialize;
@@ -6,6 +6,46 @@ use time::UtcDateTime;
 
 // BLAKE3 hash of the image data
 pub type ImageId = [u8; 32];
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PullReportStyle {
+    #[default]
+    Comment,
+    Description,
+}
+
+impl PullReportStyle {
+    pub const fn variants() -> &'static [Self] { &[Self::Comment, Self::Description] }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Comment => "comment",
+            Self::Description => "description",
+        }
+    }
+}
+
+impl FromStr for PullReportStyle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "comment" => Ok(Self::Comment),
+            "description" => Ok(Self::Description),
+            _ => Err(()),
+        }
+    }
+}
+
+impl fmt::Display for PullReportStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Comment => "Comment",
+            Self::Description => "Description",
+        })
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct Project {
@@ -19,6 +59,7 @@ pub struct Project {
     pub platform: Option<String>,
     pub workflow_id: Option<String>,
     pub enable_pr_comments: bool,
+    pub pr_report_style: PullReportStyle,
     pub header_image_id: Option<ImageId>,
     pub enabled: bool,
 }
@@ -36,6 +77,7 @@ impl Default for Project {
             platform: None,
             workflow_id: None,
             enable_pr_comments: true,
+            pr_report_style: PullReportStyle::Comment,
             header_image_id: None,
             enabled: true,
         }
