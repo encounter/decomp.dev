@@ -4,8 +4,9 @@ export function clamp(value: number, min: number, max: number) {
 
 // Formats a progress percentage as a string, and prevents partial matches from being rounded to 0.00% or 100.00%.
 export function formatPercent(value: number) {
-  if (value !== 0.0 && value !== 100.0) {
-    value = clamp(value, 0.01, 99.99);
+  let clamped = value;
+  if (clamped !== 0.0 && clamped !== 100.0) {
+    clamped = clamp(clamped, 0.01, 99.99);
   }
-  return `${value.toFixed(2)}%`;
+  return `${clamped.toFixed(2)}%`;
 }
