@@ -158,14 +158,15 @@ pub struct FrogressMapping {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Platform {
-    PS,     // 1994
-    N64,    // 1996
-    PS2,    // 2000
-    GBA,    // 2001
-    GC,     // 2001
-    DS,     // 2004
-    Wii,    // 2006
-    Switch, // 2017
+    PS,      // 1994
+    N64,     // 1996
+    PS2,     // 2000
+    GBA,     // 2001
+    GC,      // 2001
+    DS,      // 2004
+    Xbox360, // 2005
+    Wii,     // 2006
+    Switch,  // 2017
 }
 
 pub const ALL_PLATFORMS: &[Platform] = &[
@@ -175,6 +176,7 @@ pub const ALL_PLATFORMS: &[Platform] = &[
     Platform::GBA,
     Platform::GC,
     Platform::DS,
+    Platform::Xbox360,
     Platform::Wii,
     Platform::Switch,
 ];
@@ -189,6 +191,7 @@ impl Platform {
             Self::GC => "gc",
             Self::DS => "nds",
             Self::Wii => "wii",
+            Self::Xbox360 => "xbox360",
             Self::Switch => "switch",
         }
     }
@@ -202,6 +205,7 @@ impl Platform {
             Platform::GC => "GameCube",
             Platform::DS => "Nintendo DS",
             Platform::Wii => "Wii",
+            Platform::Xbox360 => "Xbox 360",
             Platform::Switch => "Switch",
         }
     }
@@ -219,6 +223,7 @@ impl FromStr for Platform {
             "gc" => Ok(Self::GC),
             "nds" => Ok(Self::DS),
             "wii" => Ok(Self::Wii),
+            "xbox360" => Ok(Self::Xbox360),
             "switch" => Ok(Self::Switch),
             _ => Err(()),
         }
