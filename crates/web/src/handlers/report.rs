@@ -104,12 +104,12 @@ fn build_category_selection<'a>(
     current_category: Option<&'a ReportCategory>,
     default_category: &str,
 ) -> CategorySelection<'a> {
-    let all_url =
-        canonical_url.query_param("category", if default_category == "all" { None } else { Some("all") });
+    let all_url = canonical_url
+        .query_param("category", if default_category == "all" { None } else { Some("all") });
     let all_category =
         ReportCategoryItem { id: "all", name: "All", path: all_url.path_and_query().to_string() };
-
-    let mut categories = vec![ReportCategoryGroup { category: all_category, subcategories: Vec::new() }];
+    let mut categories =
+        vec![ReportCategoryGroup { category: all_category, subcategories: Vec::new() }];
 
     for c in report_categories {
         if let Some((parent_id, _)) = c.id.split_once('.') {
@@ -151,15 +151,10 @@ fn build_category_selection<'a>(
         .split_once('.')
         .map(|(top, _)| (top, Some(current_category_id)))
         .unwrap_or((current_category_id, None));
-    let current_top_index = categories
-        .iter()
-        .position(|c| c.category.id == current_top_id)
-        .unwrap_or(0);
+    let current_top_index =
+        categories.iter().position(|c| c.category.id == current_top_id).unwrap_or(0);
     let current_sub_index = current_sub_id.and_then(|id| {
-        categories[current_top_index]
-            .subcategories
-            .iter()
-            .position(|sc| sc.id == id)
+        categories[current_top_index].subcategories.iter().position(|sc| sc.id == id)
     });
 
     CategorySelection { categories, current_top_index, current_sub_index }
@@ -677,8 +672,15 @@ async fn render_report(
     current_user: Option<CurrentUser>,
     mut ctx: TemplateContext,
 ) -> Result<Response, AppError> {
-    let Scope { report, project_info, measures, current_category: current_category_ref, current_unit, units, label } =
-        scope;
+    let Scope {
+        report,
+        project_info,
+        measures,
+        current_category: current_category_ref,
+        current_unit,
+        units,
+        label,
+    } = scope;
     let current_category = *current_category_ref;
 
     let mut commit_message = report.commit.message.clone();
@@ -770,11 +772,20 @@ async fn render_report(
         .collect::<Vec<_>>();
 
     let CategorySelection { categories, current_top_index, current_sub_index } =
-        build_category_selection(&canonical_url, &report.report.categories, current_category, default_category);
+        build_category_selection(
+            &canonical_url,
+            &report.report.categories,
+            current_category,
+            default_category,
+        );
     let current_top_category = &categories[current_top_index];
     let current_category_item = current_sub_index
-        .map(|i| &current_top_category.subcategories[i])
-        .unwrap_or(&current_top_category.category);
+        .map(|i| current_top_category.subcategories[i].clone())
+        .unwrap_or_else(|| ReportCategoryItem {
+            id: current_top_category.category.id,
+            name: "All",
+            path: current_top_category.category.path.clone(),
+        });
 
     let prev_commit_path = project_info.prev_commit.as_deref().map(|commit| {
         let url = request_url.with_path(&format!(
@@ -1028,7 +1039,7 @@ async fn render_report(
                                     summary { (current_category_item.name) }
                                     ul {
                                         li {
-                                            a href=(current_top_category.category.path) { (current_top_category.category.name) }
+                                            a href=(current_top_category.category.path) { "All" }
                                         }
                                         @for sub in &current_top_category.subcategories {
                                             li {
@@ -1082,8 +1093,15 @@ async fn render_history(
     mut ctx: TemplateContext,
     result: Vec<ReportHistoryEntry>,
 ) -> Result<Response, AppError> {
-    let Scope { report, project_info, measures, current_category: current_category_ref, current_unit, units: _, label } =
-        scope;
+    let Scope {
+        report,
+        project_info,
+        measures,
+        current_category: current_category_ref,
+        current_unit,
+        units: _,
+        label,
+    } = scope;
     let current_category = *current_category_ref;
 
     let request_url = Url::parse(&uri.to_string()).context("Failed to parse URI")?;
@@ -1111,7 +1129,12 @@ async fn render_history(
 
     let default_category = project_info.project.default_category();
     let CategorySelection { categories, current_top_index, current_sub_index } =
-        build_category_selection(&canonical_url, &report.report.categories, current_category, default_category);
+        build_category_selection(
+            &canonical_url,
+            &report.report.categories,
+            current_category,
+            default_category,
+        );
     let current_top_category = &categories[current_top_index];
     let current_category_item = current_sub_index
         .map(|i| &current_top_category.subcategories[i])

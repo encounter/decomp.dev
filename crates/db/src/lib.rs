@@ -52,7 +52,7 @@ impl Database {
         let report_cache = Cache::<ReportKey, CachedReportFile>::builder()
             .max_capacity(8192)
             .eviction_listener(|k, _v, _cause| {
-                tracing::info!(
+                tracing::debug!(
                     "Evicting report from cache: {}/{}@{}:{}",
                     k.owner,
                     k.repo,
@@ -63,9 +63,9 @@ impl Database {
             .build();
         let report_unit_cache = Cache::<UnitKey, Arc<ReportUnit>>::builder()
             .weigher(|_, v| v.encoded_len() as u32)
-            .max_capacity(256 * 1024 * 1024) // 256 MB
+            .max_capacity(512 * 1024 * 1024) // 512 MB
             .eviction_listener(|k, _v, _cause| {
-                tracing::info!("Evicting report unit from cache: {:?}", hex::encode(k.as_ref()));
+                tracing::debug!("Evicting report unit from cache: {:?}", hex::encode(k.as_ref()));
             })
             .build();
         let db = Self { pool, report_cache, report_unit_cache };
@@ -1177,7 +1177,9 @@ fn compress(data: &[u8]) -> Vec<u8> { COMPRESSOR.with_borrow_mut(|z| z.compress(
 fn decompress(data: &[u8]) -> Result<Cow<'_, [u8]>> {
     match zstd::zstd_safe::get_frame_content_size(data) {
         Ok(Some(size)) => {
-            Ok(Cow::Owned(DECOMPRESSOR.with_borrow_mut(|z| z.decompress(data, size as usize))?))
+            let mut buffer = Vec::with_capacity(size as usize);
+            DECOMPRESSOR.with_borrow_mut(|z| z.decompress_to_buffer(data, &mut buffer))?;
+            Ok(Cow::Owned(buffer))
         }
         Ok(None) => Err(anyhow!("Decompressed data size is unknown")),
         Err(_) => Ok(Cow::Borrowed(data)), // Assume uncompressed

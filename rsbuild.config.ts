@@ -42,6 +42,9 @@ export default defineConfig({
   plugins: [pluginSass(), pluginTypeCheck(), pluginReact()],
   server: {
     port: 3001,
+    headers: {
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+    },
   },
   dev: {
     // Load assets directly from dev server
