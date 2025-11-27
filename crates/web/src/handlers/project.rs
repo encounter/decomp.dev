@@ -170,24 +170,7 @@ pub async fn get_projects(
         .collect::<Vec<_>>();
     let show_all = platforms.is_empty() || platforms == ALL_PLATFORMS;
 
-    let mut projects = state.db.get_projects().await?;
-
-    let available_platforms = projects
-        .iter()
-        .filter_map(|p| p.project.platform.as_deref())
-        .filter_map(|s| Platform::from_str(s).ok())
-        .sorted()
-        .dedup_with_count()
-        .collect::<Vec<_>>();
-    if !show_all {
-        projects.retain(|p| {
-            p.project
-                .platform
-                .as_deref()
-                .and_then(|p| Platform::from_str(p).ok())
-                .is_some_and(|p| platforms.contains(&p))
-        });
-    }
+    let projects = state.db.get_projects().await?;
 
     let mut out = projects
         .iter()
@@ -249,6 +232,25 @@ pub async fn get_projects(
     out.retain(|c| {
         project_visibility(&c.info.project, Some(&c.measures)) == ProjectVisibility::Visible
     });
+
+    let available_platforms = out
+        .iter()
+        .filter_map(|p| p.info.project.platform.as_deref())
+        .filter_map(|s| Platform::from_str(s).ok())
+        .sorted()
+        .dedup_with_count()
+        .collect::<Vec<_>>();
+
+    if !show_all {
+        out.retain(|c| {
+            c.info
+                .project
+                .platform
+                .as_deref()
+                .and_then(|p| Platform::from_str(p).ok())
+                .is_some_and(|p| platforms.contains(&p))
+        });
+    }
 
     let current_sort_key = query.sort.as_deref().unwrap_or("updated");
     let current_sort = SORT_OPTIONS

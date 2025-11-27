@@ -1034,7 +1034,7 @@ async fn render_report(
                                     }
                                 }
                             }
-                            @if current_top_category.subcategories.len() > 0 {
+                            @if !current_top_category.subcategories.is_empty() {
                                 details.dropdown {
                                     summary { (current_category_item.name) }
                                     ul {
@@ -1215,7 +1215,7 @@ async fn render_history(
                                 }
                             }
                         }
-                        @if current_top_category.subcategories.len() > 0 {
+                        @if !current_top_category.subcategories.is_empty() {
                             details.dropdown title="Subcategory" {
                                 summary { (current_category_item.name) }
                                 ul {
