@@ -255,7 +255,7 @@ fn generate_changes_list(changes: Vec<ChangeLine>, out: &mut String) {
             change_kind.emoji()
         ));
         out.push('\n'); // Must include a blank line before a table
-        out.push_str("| Unit | Function | Bytes | Before | After |\n");
+        out.push_str("| Unit | Item | Bytes | Before | After |\n");
         out.push_str("| - | - | - | - | - |\n");
 
         // Sort to show the biggest changes first.
@@ -355,12 +355,45 @@ pub fn generate_comment(
         ));
         measure_written = true;
     }
+    if from_measures.total_data != to_measures.total_data {
+        comment.push_str(&measure_line_bytes(
+            "Total data",
+            from_measures.total_data,
+            to_measures.total_data,
+        ));
+        measure_written = true;
+    }
+    if from_measures.matched_data != to_measures.matched_data {
+        comment.push_str(&measure_line_matched(
+            "Matched data",
+            from_measures.matched_data,
+            from_measures.matched_data_percent,
+            to_measures.matched_data,
+            to_measures.matched_data_percent,
+        ));
+        measure_written = true;
+    }
+    if from_measures.complete_data != to_measures.complete_data {
+        comment.push_str(&measure_line_matched(
+            "Linked data",
+            from_measures.complete_data,
+            from_measures.complete_data_percent,
+            to_measures.complete_data,
+            to_measures.complete_data_percent,
+        ));
+        measure_written = true;
+    }
     if measure_written {
         comment.push('\n');
     }
     let mut iter = changes.units.into_iter().flat_map(|mut unit| {
+        let sections = core::mem::take(&mut unit.sections);
         let functions = core::mem::take(&mut unit.functions);
-        functions.into_iter().map(move |f| (unit.clone(), f))
+        sections
+            .into_iter()
+            .filter(|s| s.name != ".text")
+            .chain(functions)
+            .map(move |f| (unit.clone(), f))
     });
 
     let mut changes = vec![];
