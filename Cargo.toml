@@ -7,6 +7,7 @@ members = [
     "crates/db",
     "crates/github",
     "crates/images",
+    "crates/jobs",
     "crates/web",
 ]
 
@@ -17,6 +18,9 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 anyhow = "1.0"
+apalis = "1.0.0-beta.2"
+apalis-cron = "1.0.0-beta.2"
+apalis-sqlite = "1.0.0-beta.2"
 axum = { version = "0.8", features = ["macros"] }
 futures-util = "0.3.31"
 hex = "0.4"

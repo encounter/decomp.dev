@@ -22,6 +22,7 @@ use axum::{
 use decomp_dev_core::config::{Config, GitHubConfig};
 use decomp_dev_db::Database;
 use decomp_dev_github::{GitHub, webhook::WebhookState};
+use decomp_dev_jobs::{JobContext, JobStorage, WorkerConfig, create_monitor};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -38,10 +39,11 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use crate::handlers::{build_router, csp::csp_middleware};
 
 #[derive(Clone, FromRef)]
-struct AppState {
+pub struct AppState {
     config: Config,
     db: Database,
     github: GitHub,
+    jobs: JobStorage,
 }
 
 impl FromRef<AppState> for WebhookState {
@@ -75,7 +77,11 @@ async fn main() {
     };
     let db = Database::new(&config.db).await.expect("Failed to open database");
     let github = GitHub::new(&config.github).await.expect("Failed to create GitHub client");
-    let state = AppState { config, db: db.clone(), github };
+
+    // Set up job storage
+    let jobs = JobStorage::setup(&db.pool).await.expect("Failed to set up job storage");
+
+    let state = AppState { config, db: db.clone(), github: github.clone(), jobs: jobs.clone() };
 
     // Create session store
     let session_store = SqliteStore::new(db.pool.clone());
@@ -89,6 +95,10 @@ async fn main() {
     let mut scheduler = cron::create(state.clone(), session_store.clone())
         .await
         .expect("Failed to create scheduler");
+
+    // Create the job monitor
+    let job_context = JobContext { config: state.config.clone(), db: state.db.clone(), github };
+    let monitor = create_monitor(jobs, job_context, WorkerConfig::default());
 
     // Build the router
     let port = state.config.server.port;
@@ -124,11 +134,24 @@ async fn main() {
             .expect("Failed to notify");
     }
 
-    // Run our service
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server error");
+    // Run both the web server and job monitor concurrently, with graceful shutdown
+    let web_server = async {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .map_err(|e| anyhow::anyhow!("Web server error: {e}"))
+    };
+    let job_monitor = async {
+        monitor
+            .run_with_signal(shutdown_signal_io())
+            .await
+            .map_err(|e| anyhow::anyhow!("Job monitor error: {e}"))
+    };
+
+    // Wait for both to complete gracefully (early return on error)
+    if let Err(e) = tokio::try_join!(web_server, job_monitor) {
+        tracing::error!("{e}");
+    }
 
     #[cfg(unix)]
     {
@@ -167,25 +190,21 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
     router.layer(middleware).with_state(state)
 }
 
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
-    };
+async fn shutdown_signal() { shutdown_signal_io().await.ok(); }
 
+/// Shutdown signal that returns io::Result for apalis compatibility.
+async fn shutdown_signal_io() -> std::io::Result<()> {
     #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
+    {
+        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = signal::ctrl_c() => result,
+            _ = sigterm.recv() => Ok(()),
+        }
+    }
     #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    {
+        signal::ctrl_c().await
     }
 }
 
