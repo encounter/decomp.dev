@@ -7,6 +7,7 @@ default-run = "decomp-dev-web"
 
 [dependencies]
 anyhow.workspace = true
+apalis.workspace = true
 axum.workspace = true
 axum_typed_multipart = "0.16"
 decomp-dev-auth = { path = "../auth" }
@@ -14,6 +15,7 @@ decomp-dev-core = { path = "../core" }
 decomp-dev-db = { path = "../db" }
 decomp-dev-github = { path = "../github" }
 decomp-dev-images = { path = "../images" }
+decomp-dev-jobs = { path = "../jobs" }
 hex.workspace = true
 image.workspace = true
 itertools = "0.14"
@@ -21,6 +23,7 @@ lexicmp = "0.2"
 maud.workspace = true
 mime.workspace = true
 objdiff-core.workspace = true
+octocrab.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

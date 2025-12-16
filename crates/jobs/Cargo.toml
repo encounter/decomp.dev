@@ -1,0 +1,21 @@
+[package]
+name = "decomp-dev-jobs"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+apalis.workspace = true
+apalis-cron.workspace = true
+apalis-sqlite.workspace = true
+decomp-dev-core = { path = "../core" }
+decomp-dev-db = { path = "../db" }
+decomp-dev-github = { path = "../github" }
+octocrab.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true

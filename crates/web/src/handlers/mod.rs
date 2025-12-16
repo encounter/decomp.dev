@@ -23,6 +23,7 @@ mod manage;
 mod project;
 mod report;
 mod treemap;
+mod webhook;
 
 pub fn build_router() -> Router<AppState> {
     Router::new()
@@ -55,7 +56,7 @@ pub fn build_router() -> Router<AppState> {
         ))
         .route("/robots.txt", get(common::get_robots))
         .route("/api", get(api::overview))
-        .route("/api/github/webhook", post(decomp_dev_github::webhook::webhook))
+        .route("/api/github/webhook", post(webhook::webhook))
         .route("/api/github/oauth", get(decomp_dev_auth::oauth))
         .route("/login", get(auth::login))
         .route("/logout", post(auth::logout))

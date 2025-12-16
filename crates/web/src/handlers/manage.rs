@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
+use apalis::prelude::TaskSink;
 use axum::{
     Form,
     extract::{Path, State},
@@ -20,6 +21,7 @@ use decomp_dev_core::{
 use decomp_dev_github::{
     check_for_reports, extract_github_url, graphql::RepositoryPermission, refresh_project,
 };
+use decomp_dev_jobs::RefreshProjectJob;
 use itertools::Itertools;
 use maud::{DOCTYPE, Markup, html};
 use serde::{Deserialize, Serialize};
@@ -682,18 +684,19 @@ pub async fn manage_project_refresh(
     if !current_user.can_manage_repo(info.project.id) {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     }
-    let client = current_user.client(&state.config.github)?;
-    let message =
-        match refresh_project(&state.github, &state.db, info.project.id, Some(&client), true).await
-        {
-            Ok(inserted_reports) => {
-                Message::Info(format!("Fetched {inserted_reports} new reports"))
-            }
-            Err(e) => {
-                tracing::error!("Failed to refresh project: {:?}", e);
-                Message::Error(format!("Failed to refresh project: {e}"))
-            }
-        };
+
+    // Enqueue a refresh job instead of processing synchronously
+    let job = RefreshProjectJob { repository_id: info.project.id, full_refresh: true };
+
+    let mut storage = state.jobs.refresh_project();
+    let message = match storage.push(job).await {
+        Ok(()) => Message::Info("Refresh job queued. Reports will be updated shortly.".to_string()),
+        Err(e) => {
+            tracing::error!("Failed to enqueue refresh job: {:?}", e);
+            Message::Error(format!("Failed to queue refresh: {e}"))
+        }
+    };
+
     session.insert(&format!("manage_{}_message", info.project.id), message).await?;
     let redirect_url = format!("/manage/{}/{}", params.owner, params.repo);
     Ok(Redirect::to(&redirect_url).into_response())
