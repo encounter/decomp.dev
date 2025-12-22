@@ -588,6 +588,7 @@ fn apply_scope<'a>(
     }
     let (w, h) = query.size();
     let mut units = if let Some(unit) = current_unit {
+        let linked = unit.metadata.as_ref().is_some_and(|m| m.complete.is_some_and(|c| c));
         unit.functions
             .iter()
             .filter_map(|f| {
@@ -607,7 +608,7 @@ fn apply_scope<'a>(
                     y: 0.0,
                     w: 0.0,
                     h: 0.0,
-                    is_linked: false,
+                    is_linked: linked,
                 })
             })
             .collect::<Vec<_>>()
