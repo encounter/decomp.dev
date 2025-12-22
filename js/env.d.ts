@@ -9,7 +9,7 @@ type Unit = {
   y: number;
   w: number;
   h: number;
-  is_linked: bool;
+  is_linked: boolean;
   // Runtime fields
   filtered: boolean;
 };
