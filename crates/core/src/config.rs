@@ -20,6 +20,7 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DbConfig {
     pub url: String,
+    pub jobs_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

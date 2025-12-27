@@ -2,7 +2,7 @@ mod jobs;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use apalis::{
     layers::retry::{
         HasherRng, RetryPolicy,
@@ -11,13 +11,13 @@ use apalis::{
     prelude::*,
 };
 use apalis_sqlite::{CompactType, SqliteStorage, fetcher::SqliteFetcher};
-use decomp_dev_core::config::{Config, WorkerConfig};
+use decomp_dev_core::config::{Config, DbConfig, WorkerConfig};
 use decomp_dev_db::Database;
 use decomp_dev_github::GitHub;
 pub use jobs::{
     ProcessWorkflowRunJob, RefreshProjectJob, process_refresh_project_job, process_workflow_run_job,
 };
-use sqlx::sqlite::SqlitePool;
+use sqlx::{Sqlite, migrate::MigrateDatabase, sqlite::SqlitePool};
 
 /// Shared context available to all job handlers.
 #[derive(Clone)]
@@ -45,11 +45,18 @@ pub struct JobStorage {
 
 impl JobStorage {
     /// Set up job storage tables and create storage instances.
-    pub async fn setup(pool: &SqlitePool) -> Result<Arc<Self>> {
-        SqliteStorage::setup(pool).await?;
+    pub async fn setup(db: &DbConfig) -> Result<Arc<Self>> {
+        if !Sqlite::database_exists(&db.jobs_url).await.unwrap_or(false) {
+            tracing::info!(url = %db.jobs_url, "Creating database");
+            Sqlite::create_database(&db.jobs_url).await.context("Failed to create database")?;
+            tracing::info!("Database created");
+        }
+        let pool =
+            SqlitePool::connect(&db.jobs_url).await.context("Failed to connect to database")?;
+        SqliteStorage::setup(&pool).await?;
         Ok(Arc::new(Self {
-            workflow_run: SqliteStorage::new(pool),
-            refresh_project: SqliteStorage::new(pool),
+            workflow_run: SqliteStorage::new(&pool),
+            refresh_project: SqliteStorage::new(&pool),
         }))
     }
 
