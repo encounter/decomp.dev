@@ -26,7 +26,7 @@ mod treemap;
 mod webhook;
 
 pub fn build_router() -> Router<AppState> {
-    Router::new()
+    Router::<AppState>::new()
         .nest_service(
             "/static",
             <ServeDir as ServiceExt<Request>>::map_response(

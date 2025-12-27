@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt, str::FromStr, sync::Arc};
 
 use objdiff_core::bindings::report::{Measures, Report, ReportCategory, ReportUnit};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::UtcDateTime;
 
 // BLAKE3 hash of the image data
@@ -123,7 +123,7 @@ impl ProjectInfo {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Commit {
     pub sha: String,
     pub message: Option<String>,

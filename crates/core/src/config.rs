@@ -6,6 +6,8 @@ pub struct Config {
     pub db: DbConfig,
     pub github: GitHubConfig,
     pub openai: Option<OpenAiConfig>,
+    #[serde(default)]
+    pub worker: WorkerConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -46,4 +48,21 @@ pub struct GitHubOAuthConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct OpenAiConfig {
     pub api_key: String,
+}
+
+/// Configuration for job workers.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WorkerConfig {
+    /// Maximum concurrent workflow run jobs.
+    pub workflow_run_concurrency: usize,
+    /// Maximum concurrent refresh project jobs.
+    pub refresh_project_concurrency: usize,
+    /// Number of retry attempts for failed jobs.
+    pub retry_attempts: usize,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self { workflow_run_concurrency: 3, refresh_project_concurrency: 1, retry_attempts: 5 }
+    }
 }

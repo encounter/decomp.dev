@@ -1,9 +1,16 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use anyhow::Result;
-use decomp_dev_core::{models::Commit, util::format_percent};
+use anyhow::{Context, Result};
+use decomp_dev_core::{
+    models::{Commit, Project, PullReportStyle},
+    util::format_percent,
+};
 use objdiff_core::bindings::report::{
     ChangeItem, ChangeItemInfo, ChangeUnit, Changes, Report, ReportItem, ReportUnit,
+};
+use octocrab::{
+    Octocrab,
+    models::{RepositoryId, pulls::PullRequest},
 };
 
 pub fn generate_changes(previous: &Report, current: &Report) -> Result<Changes> {
@@ -439,6 +446,83 @@ pub fn generate_comment(
         comment.push_str("No changes\n");
     }
     comment
+}
+
+/// Post or update a PR comment with the report.
+pub async fn post_pr_comment(
+    client: &Octocrab,
+    project: &Project,
+    repository_id: RepositoryId,
+    pull: &PullRequest,
+    combined_comment: &str,
+) -> Result<()> {
+    if project.pr_report_style == PullReportStyle::Description {
+        let start_marker = "<!-- decomp.dev report start -->";
+        let end_marker = "<!-- decomp.dev report end -->";
+        let new_section = format!("{start_marker}\n{combined_comment}\n{end_marker}");
+        let existing_body = pull.body.as_deref().unwrap_or_default();
+        let new_body = if let Some(start_idx) = existing_body.find(start_marker) {
+            if let Some(end_rel) = existing_body[start_idx..].find(end_marker) {
+                let end_idx = start_idx + end_rel + end_marker.len();
+                format!(
+                    "{}{}{}",
+                    &existing_body[..start_idx],
+                    new_section,
+                    &existing_body[end_idx..]
+                )
+            } else {
+                format!("{existing_body}\n\n---\n\n{new_section}")
+            }
+        } else if existing_body.trim().is_empty() {
+            new_section
+        } else {
+            format!("{}\n\n---\n\n{}", existing_body.trim(), new_section)
+        };
+
+        client
+            .pulls(&project.owner, &project.repo)
+            .update(pull.number)
+            .body(new_body)
+            .send()
+            .await
+            .context("Failed to update pull request body")?;
+    } else {
+        let issues = client.issues_by_id(repository_id);
+        // Only fetch first page for now
+        let existing_comments = issues.list_comments(pull.number).send().await?;
+
+        // Find existing report comments
+        let existing_report_comments: Vec<_> = existing_comments
+            .items
+            .iter()
+            .filter(|comment| {
+                comment.body.as_ref().is_some_and(|body| body.contains("### Report for "))
+            })
+            .collect();
+
+        if let Some(first_comment) = existing_report_comments.first() {
+            // Update the first comment
+            issues
+                .update_comment(first_comment.id, combined_comment.to_string())
+                .await
+                .context("Failed to update existing comment")?;
+
+            // Delete any additional report comments
+            for comment in existing_report_comments.iter().skip(1) {
+                if let Err(e) = issues.delete_comment(comment.id).await {
+                    tracing::warn!("Failed to delete old comment {}: {}", comment.id, e);
+                }
+            }
+        } else {
+            // Create new comment
+            issues
+                .create_comment(pull.number, combined_comment.to_string())
+                .await
+                .context("Failed to create comment")?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

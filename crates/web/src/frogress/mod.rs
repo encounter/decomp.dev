@@ -70,7 +70,7 @@ pub async fn migrate_data(state: &mut AppState) -> Result<()> {
         if version_data_iter.next().is_some() {
             bail!("Unexpected version data for {}/{}", slug, version);
         }
-        let mut reports = HashMap::<String, Report>::new(); // keyed by git sha
+        let mut reports = HashMap::<String, Box<Report>>::new(); // keyed by git sha
         let mut commits = HashMap::<String, Commit>::new();
         let category_chunks = version_group.chunk_by(|m| m.frogress_category.as_str());
         for (category, mappings) in &category_chunks {

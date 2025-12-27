@@ -20,7 +20,7 @@ rust-version = "1.88"
 anyhow = "1.0"
 apalis = "1.0.0-beta.2"
 apalis-cron = "1.0.0-beta.2"
-apalis-sqlite = "1.0.0-beta.2"
+apalis-sqlite = "1.0.0-beta.4"
 axum = { version = "0.8", features = ["macros"] }
 futures-util = "0.3.31"
 hex = "0.4"
