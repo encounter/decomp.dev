@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header::REFERER},
@@ -20,7 +22,7 @@ pub async fn login(
     session: Session,
     headers: HeaderMap,
     Query(query): Query<LoginQuery>,
-    State(config): State<Config>,
+    State(config): State<Arc<Config>>,
     current_user: Option<CurrentUser>,
     mut ctx: TemplateContext,
 ) -> Result<Response, AppError> {

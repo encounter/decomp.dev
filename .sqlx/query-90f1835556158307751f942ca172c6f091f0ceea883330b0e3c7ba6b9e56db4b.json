@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT EXISTS (\n                SELECT 1\n                FROM projects\n                WHERE id = ?\n            ) AS \"exists!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "exists!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "90f1835556158307751f942ca172c6f091f0ceea883330b0e3c7ba6b9e56db4b"
+}

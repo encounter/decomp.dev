@@ -46,5 +46,5 @@ url.workspace = true
 bytes = "1.7"
 prost = "0.13"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 libsystemd = "0.7"

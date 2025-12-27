@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result, anyhow, bail};
 use axum::{
     Extension,
@@ -153,7 +155,7 @@ struct RefreshAccessToken<'a> {
 pub async fn oauth(
     session: Session,
     Query(OAuthQuery { code, state: oauth_state }): Query<OAuthQuery>,
-    State(config): State<GitHubConfig>,
+    State(config): State<Arc<Config>>,
 ) -> Result<Response, AppError> {
     let Some(existing_state) = session.remove::<String>(GITHUB_OAUTH_STATE).await? else {
         tracing::warn!("No state found in session");
@@ -164,7 +166,7 @@ pub async fn oauth(
         return Ok((StatusCode::BAD_REQUEST, "State mismatch").into_response());
     }
 
-    let current_user = fetch_access_token(&config, &code).await?;
+    let current_user = fetch_access_token(&config.github, &code).await?;
     session.insert(CURRENT_USER, current_user).await?;
 
     if let Some(return_to) = session.remove::<String>(RETURN_TO).await? {
@@ -244,7 +246,7 @@ async fn refresh_access_token(
 
 impl<S> FromRequestParts<S> for CurrentUser
 where
-    Config: FromRef<S>,
+    Arc<Config>: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = Response;
@@ -278,7 +280,7 @@ where
 
 impl<S> OptionalFromRequestParts<S> for CurrentUser
 where
-    Config: FromRef<S>,
+    Arc<Config>: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = (StatusCode, &'static str);
@@ -288,7 +290,7 @@ where
         state: &S,
     ) -> Result<Option<Self>, Self::Rejection> {
         let session = Session::from_request_parts(parts, state).await?;
-        let config = Config::from_ref(state);
+        let config = Arc::<Config>::from_ref(state);
         let mut user = match session.get::<CurrentUser>(CURRENT_USER).await {
             Ok(Some(user)) => user,
             Ok(None) => return Ok(None),

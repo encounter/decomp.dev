@@ -352,16 +352,12 @@ pub async fn manage_project(
     }
 
     let report = if let (Some(version), Some(commit)) = (info.default_version(), &info.commit) {
-        state
-            .db
-            .get_report(&info.project.owner, &info.project.repo, &commit.sha, version)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to fetch report for {}/{} sha {} version {}",
-                    info.project.owner, info.project.repo, commit.sha, version
-                )
-            })?
+        state.db.get_report(info.project.id, &commit.sha, version).await.with_context(|| {
+            format!(
+                "Failed to fetch report for {}/{} sha {} version {}",
+                info.project.owner, info.project.repo, commit.sha, version
+            )
+        })?
     } else {
         None
     };

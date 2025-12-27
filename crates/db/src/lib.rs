@@ -27,8 +27,7 @@ pub struct Database {
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 struct ReportKey {
-    owner: String,
-    repo: String,
+    project_id: u64,
     commit: String,
     version: String,
 }
@@ -37,7 +36,7 @@ struct ReportKey {
 const BIND_LIMIT: usize = 32766;
 
 impl Database {
-    pub async fn new(config: &DbConfig) -> Result<Self> {
+    pub async fn new(config: &DbConfig) -> Result<Arc<Self>> {
         if !Sqlite::database_exists(&config.url).await.unwrap_or(false) {
             tracing::info!(url = %config.url, "Creating database");
             Sqlite::create_database(&config.url).await.context("Failed to create database")?;
@@ -53,9 +52,8 @@ impl Database {
             .max_capacity(8192)
             .eviction_listener(|k, _v, _cause| {
                 tracing::debug!(
-                    "Evicting report from cache: {}/{}@{}:{}",
-                    k.owner,
-                    k.repo,
+                    "Evicting report from cache: {}@{}:{}",
+                    k.project_id,
                     k.commit,
                     k.version
                 );
@@ -72,7 +70,7 @@ impl Database {
         db.fixup_report_units().await.context("Fixing report units")?;
         db.migrate_reports().await.context("Migrating reports")?;
         // db.cleanup_report_units().await.context("Running report cleanup")?;
-        Ok(db)
+        Ok(Arc::new(db))
     }
 
     pub async fn close(&self) { self.pool.close().await }
@@ -82,7 +80,7 @@ impl Database {
         project: &Project,
         commit: &Commit,
         version: &str,
-        mut report: Report,
+        mut report: Box<Report>,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         let project_id = project.id as i64;
@@ -138,8 +136,7 @@ impl Database {
         // self.report_cache
         //     .insert(
         //         ReportKey {
-        //             owner: project.owner.to_ascii_lowercase(),
-        //             repo: project.repo.to_ascii_lowercase(),
+        //             project_id: project.id,
         //             commit: commit.sha.to_ascii_lowercase(),
         //             version: version.to_ascii_lowercase(),
         //         },
@@ -184,21 +181,19 @@ impl Database {
 
     pub async fn get_versions_for_commit(
         &self,
-        owner: &str,
-        repo: &str,
+        project_id: u64,
         commit: &str,
     ) -> Result<Vec<String>> {
         let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
         let versions = sqlx::query!(
             r#"
             SELECT version
             FROM reports JOIN projects ON reports.project_id = projects.id
-            WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE
-                  AND git_commit = ? COLLATE NOCASE
+            WHERE projects.id = ? AND git_commit = ? COLLATE NOCASE
             ORDER BY version
             "#,
-            owner,
-            repo,
+            project_id_db,
             commit
         )
         .fetch_all(&mut *conn)
@@ -211,14 +206,12 @@ impl Database {
 
     pub async fn get_report(
         &self,
-        owner: &str,
-        repo: &str,
+        project_id: u64,
         commit: &str,
         version: &str,
     ) -> Result<Option<CachedReportFile>> {
         let key = ReportKey {
-            owner: owner.to_ascii_lowercase(),
-            repo: repo.to_ascii_lowercase(),
+            project_id,
             commit: commit.to_ascii_lowercase(),
             version: version.to_ascii_lowercase(),
         };
@@ -226,6 +219,7 @@ impl Database {
             return Ok(Some(report));
         }
         let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
         let (report_id, commit, version, mut report) = match sqlx::query!(
             r#"
             SELECT
@@ -236,11 +230,9 @@ impl Database {
                 version,
                 data
             FROM reports JOIN projects ON reports.project_id = projects.id
-            WHERE projects.owner = ? COLLATE NOCASE AND projects.repo = ? COLLATE NOCASE
-                  AND version = ? COLLATE NOCASE AND git_commit = ? COLLATE NOCASE
+            WHERE projects.id = ? AND version = ? COLLATE NOCASE AND git_commit = ? COLLATE NOCASE
             "#,
-            owner,
-            repo,
+            project_id_db,
             version,
             commit
         )
@@ -384,14 +376,43 @@ impl Database {
         Ok(exists)
     }
 
-    pub async fn get_project_info(
+    pub async fn project_exists(&self, project_id: u64) -> Result<bool> {
+        let mut conn = self.pool.acquire().await?;
+        let project_id_db = project_id as i64;
+        let exists = sqlx::query!(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM projects
+                WHERE id = ?
+            ) AS "exists!"
+            "#,
+            project_id_db,
+        )
+        .fetch_one(&mut *conn)
+        .await?
+        .exists
+            != 0;
+        Ok(exists)
+    }
+
+    pub async fn get_project(&self, owner: &str, repo: &str) -> Result<Option<Project>> {
+        let mut conn = self.pool.acquire().await?;
+        self.get_project_inner(&mut conn, owner, repo).await
+    }
+
+    pub async fn get_project_by_id(&self, project_id: u64) -> Result<Option<Project>> {
+        let mut conn = self.pool.acquire().await?;
+        self.get_project_by_id_inner(&mut conn, project_id).await
+    }
+
+    async fn get_project_inner(
         &self,
+        conn: &mut SqliteConnection,
         owner: &str,
         repo: &str,
-        commit: Option<&str>,
-    ) -> Result<Option<ProjectInfo>> {
-        let mut conn = self.pool.acquire().await?;
-        let project = match sqlx::query!(
+    ) -> Result<Option<Project>> {
+        Ok(sqlx::query!(
             r#"
             SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, pr_report_style AS "pr_report_style!", header_image_id, enabled
             FROM projects
@@ -400,10 +421,10 @@ impl Database {
             owner,
             repo
         )
-            .fetch_optional(&mut *conn)
-            .await?
-        {
-            Some(row) => Project {
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|row| {
+            Project {
                 id: row.id as u64,
                 owner: row.owner,
                 repo: row.repo,
@@ -417,32 +438,29 @@ impl Database {
                 pr_report_style: row.pr_report_style.parse().unwrap_or_default(),
                 header_image_id: row.header_image_id.and_then(|b| b.try_into().ok()),
                 enabled: row.enabled,
-            },
-            None => return Ok(None),
-        };
-        self.get_project_info_inner(&mut conn, project, commit).await
+            }
+        }))
     }
 
-    pub async fn get_project_info_by_id(
+    async fn get_project_by_id_inner(
         &self,
+        conn: &mut SqliteConnection,
         project_id: u64,
-        commit: Option<&str>,
-    ) -> Result<Option<ProjectInfo>> {
-        let mut conn = self.pool.acquire().await?;
+    ) -> Result<Option<Project>> {
         let project_id_db = project_id as i64;
-        let project = match sqlx::query!(
+        Ok(sqlx::query!(
             r#"
-            SELECT owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, pr_report_style AS "pr_report_style!", header_image_id, enabled
+            SELECT id AS "id!", owner, repo, name, short_name, default_category, default_version, platform, workflow_id, enable_pr_comments, pr_report_style AS "pr_report_style!", header_image_id, enabled
             FROM projects
             WHERE id = ?
             "#,
             project_id_db
         )
-            .fetch_optional(&mut *conn)
-            .await?
-        {
-            Some(row) => Project {
-                id: project_id,
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|row| {
+            Project {
+                id: row.id as u64,
                 owner: row.owner,
                 repo: row.repo,
                 name: row.name,
@@ -455,8 +473,31 @@ impl Database {
                 pr_report_style: row.pr_report_style.parse().unwrap_or_default(),
                 header_image_id: row.header_image_id.and_then(|b| b.try_into().ok()),
                 enabled: row.enabled,
-            },
-            None => return Ok(None),
+            }
+        }))
+    }
+
+    pub async fn get_project_info(
+        &self,
+        owner: &str,
+        repo: &str,
+        commit: Option<&str>,
+    ) -> Result<Option<ProjectInfo>> {
+        let mut conn = self.pool.acquire().await?;
+        let Some(project) = self.get_project_inner(&mut conn, owner, repo).await? else {
+            return Ok(None);
+        };
+        self.get_project_info_inner(&mut conn, project, commit).await
+    }
+
+    pub async fn get_project_info_by_id(
+        &self,
+        project_id: u64,
+        commit: Option<&str>,
+    ) -> Result<Option<ProjectInfo>> {
+        let mut conn = self.pool.acquire().await?;
+        let Some(project) = self.get_project_by_id_inner(&mut conn, project_id).await? else {
+            return Ok(None);
         };
         self.get_project_info_inner(&mut conn, project, commit).await
     }
@@ -681,7 +722,7 @@ impl Database {
         version: &str,
     ) -> Result<Vec<CachedReportFile>> {
         let mut conn = self.pool.acquire().await?;
-        let project_id = project.id as i64;
+        let project_id_db = project.id as i64;
         let commits = sqlx::query!(
             r#"
             SELECT git_commit, git_commit_message, timestamp
@@ -689,7 +730,7 @@ impl Database {
             WHERE project_id = ? AND version = ? COLLATE NOCASE
             ORDER BY timestamp DESC
             "#,
-            project_id,
+            project_id_db,
             version
         )
         .fetch_all(&mut *conn)
@@ -703,8 +744,7 @@ impl Database {
         .collect::<Vec<_>>();
         let mut reports = Vec::with_capacity(commits.len());
         for commit in commits {
-            let report =
-                self.get_report(&project.owner, &project.repo, &commit.sha, version).await?;
+            let report = self.get_report(project.id, &commit.sha, version).await?;
             if let Some(report) = report {
                 reports.push(report);
             } else {
@@ -908,16 +948,6 @@ impl Database {
             let project_id_db = project_id as i64;
             let result = sqlx::query!(
                 r#"
-                SELECT owner, repo FROM projects WHERE id = ?
-                "#,
-                project_id_db,
-            )
-            .fetch_one(&mut *conn)
-            .await?;
-            let owner = result.owner;
-            let repo = result.repo;
-            let result = sqlx::query!(
-                r#"
                 SELECT version FROM reports WHERE project_id = ? AND git_commit = ? COLLATE NOCASE
                 "#,
                 project_id_db,
@@ -928,8 +958,7 @@ impl Database {
             result
                 .iter()
                 .map(|r| ReportKey {
-                    owner: owner.to_ascii_lowercase(),
-                    repo: repo.to_ascii_lowercase(),
+                    project_id,
                     commit: commit.to_ascii_lowercase(),
                     version: r.version.to_ascii_lowercase(),
                 })

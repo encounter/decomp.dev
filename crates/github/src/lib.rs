@@ -8,6 +8,7 @@ use std::{
     io::{Cursor, Read},
     pin::pin,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -32,6 +33,7 @@ use time::UtcDateTime;
 use tokio::{
     sync::{Mutex, Semaphore},
     task::JoinSet,
+    time::sleep,
 };
 
 #[derive(Clone)]
@@ -164,7 +166,7 @@ async fn list_installations(app_client: Octocrab) -> Result<Installations> {
 }
 
 impl GitHub {
-    pub async fn new(config: &GitHubConfig) -> Result<Self> {
+    pub async fn new(config: &GitHubConfig) -> Result<Arc<Self>> {
         let client = Octocrab::builder()
             .personal_token(config.token.clone())
             .build()
@@ -205,7 +207,7 @@ impl GitHub {
         } else {
             None
         };
-        Ok(Self { client, installations })
+        Ok(Arc::new(Self { client, installations }))
     }
 
     pub async fn get_commit(
@@ -349,31 +351,34 @@ pub async fn refresh_project(
         struct TaskResult {
             run_id: RunId,
             commit: Commit,
-            result: Result<ProcessWorkflowRunResult>,
+            result: Result<WorkflowRunArtifacts>,
         }
         let sem = Arc::new(Semaphore::new(10));
         let mut set = JoinSet::new();
         for run in runs {
             let sem = sem.clone();
-            let project = project.clone();
+            let project_id = project.id;
+            let owner = project.owner.clone();
+            let repo = project.repo.clone();
             let client = client.clone();
             let db = db.clone();
             let run_id = run.id;
             let commit = commit_from_head_commit(&run.head_commit);
             set.spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                match db.report_exists(project.id, &commit.sha).await {
+                match db.report_exists(project_id, &commit.sha).await {
                     Ok(true) => {
                         return TaskResult {
                             run_id,
                             commit,
-                            result: Ok(ProcessWorkflowRunResult { artifacts: vec![] }),
+                            result: Ok(WorkflowRunArtifacts { artifacts: vec![] }),
                         };
                     }
                     Ok(false) => {}
                     Err(e) => return TaskResult { run_id, commit, result: Err(e) },
                 }
-                let result = process_workflow_run(&client, &project, run.id).await;
+                let result =
+                    fetch_workflow_run_artifacts(&client, &owner, &repo, run.id, None).await;
                 TaskResult { run_id, commit, result }
             });
         }
@@ -383,7 +388,7 @@ pub async fn refresh_project(
                 Ok(TaskResult {
                     run_id,
                     commit,
-                    result: Ok(ProcessWorkflowRunResult { artifacts }),
+                    result: Ok(WorkflowRunArtifacts { artifacts }),
                 }) => {
                     tracing::debug!(
                         "Processed workflow run {} ({}) (artifacts {})",
@@ -393,7 +398,7 @@ pub async fn refresh_project(
                     );
                     for artifact in artifacts {
                         let start = std::time::Instant::now();
-                        db.insert_report(project, &commit, &artifact.version, *artifact.report)
+                        db.insert_report(project, &commit, &artifact.version, artifact.report)
                             .await?;
                         let duration = start.elapsed();
                         tracing::info!(
@@ -430,25 +435,32 @@ pub async fn refresh_project(
     Ok(0)
 }
 
-pub struct ProcessWorkflowRunResult {
-    pub artifacts: Vec<ProcessArtifactResult>,
+pub struct WorkflowRunArtifacts {
+    pub artifacts: Vec<WorkflowRunArtifact>,
 }
 
-pub struct ProcessArtifactResult {
+pub struct WorkflowRunArtifact {
     pub version: String,
     pub report: Box<Report>,
 }
 
-pub async fn process_workflow_run(
+struct WorkflowRunArtifactList {
+    pub version: String,
+    pub name: String,
+    pub id: ArtifactId,
+}
+
+async fn map_workflow_run_artifacts(
     client: &Octocrab,
-    project: &Project,
+    owner: &str,
+    repo: &str,
     run_id: RunId,
-) -> Result<ProcessWorkflowRunResult> {
+) -> Result<Vec<WorkflowRunArtifactList>> {
     let artifacts = client
         .all_pages(
             client
                 .actions()
-                .list_workflow_run_artifacts(&project.owner, &project.repo, run_id)
+                .list_workflow_run_artifacts(owner, repo, run_id)
                 .send()
                 .await
                 .context("Failed to fetch artifacts")?
@@ -457,31 +469,21 @@ pub async fn process_workflow_run(
         )
         .await?;
     tracing::debug!("Run {} (artifacts {})", run_id, artifacts.len());
-    let mut result = ProcessWorkflowRunResult { artifacts: vec![] };
-    if artifacts.is_empty() {
-        return Ok(result);
-    }
     static REGEX: OnceLock<Regex> = OnceLock::new();
     let regex = REGEX
         .get_or_init(|| Regex::new(r"^(?P<version>[A-z0-9_.\-]+)[_-]report(?:[_-].*)?$").unwrap());
     static MAPS_REGEX: OnceLock<Regex> = OnceLock::new();
     let maps_regex =
         MAPS_REGEX.get_or_init(|| Regex::new(r"^(?P<version>[A-z0-9_\-]+)_maps$").unwrap());
-    let sem = Arc::new(Semaphore::new(3));
-    let mut set = JoinSet::new();
-    struct TaskResult {
-        artifact_name: String,
-        result: DownloadArtifactResult,
-    }
+    let mut result = Vec::new();
     for artifact in &artifacts {
         if artifact.expired {
             continue;
         }
-        let artifact_name = artifact.name.clone();
         let version =
-            if let Some(version) = regex.captures(&artifact_name).and_then(|c| c.name("version")) {
+            if let Some(version) = regex.captures(&artifact.name).and_then(|c| c.name("version")) {
                 version.as_str().to_string()
-            } else if artifact_name == "progress" || artifact_name == "progress.json" {
+            } else if artifact.name == "progress" || artifact.name == "progress.json" {
                 // bfbb compatibility
                 if let Some(version) = artifacts.iter().find_map(|a| {
                     maps_regex
@@ -496,15 +498,76 @@ pub async fn process_workflow_run(
             } else {
                 continue;
             };
+        result.push(WorkflowRunArtifactList {
+            version,
+            name: artifact.name.clone(),
+            id: artifact.id,
+        });
+    }
+    Ok(result)
+}
+
+pub async fn fetch_workflow_run_artifacts(
+    client: &Octocrab,
+    owner: &str,
+    repo: &str,
+    run_id: RunId,
+    base_versions: Option<&[String]>,
+) -> Result<WorkflowRunArtifacts> {
+    // Some artifacts may take a few seconds to appear, so if we're provided with
+    // expected base_versions, retry a few times to ensure we get them all.
+    let mut attempt = 0;
+    let artifacts = loop {
+        let artifacts = map_workflow_run_artifacts(client, owner, repo, run_id).await?;
+        if let Some(base_versions) = &base_versions {
+            if base_versions
+                .iter()
+                .all(|base_version| artifacts.iter().any(|a| &a.version == base_version))
+            {
+                break artifacts;
+            }
+            attempt += 1;
+            if attempt >= 5 {
+                tracing::warn!(
+                    "Workflow run {} missing expected artifacts after {} attempts",
+                    run_id,
+                    attempt
+                );
+                break artifacts;
+            }
+            tracing::info!(
+                "Workflow run {} missing expected artifacts, retrying (attempt {}/{})",
+                run_id,
+                attempt,
+                5
+            );
+            sleep(Duration::from_secs(1 << attempt)).await;
+        } else {
+            break artifacts;
+        }
+    };
+    tracing::debug!("Run {} (artifacts {})", run_id, artifacts.len());
+    let mut result = WorkflowRunArtifacts { artifacts: vec![] };
+    if artifacts.is_empty() {
+        return Ok(result);
+    }
+    let sem = Arc::new(Semaphore::new(3));
+    let mut set = JoinSet::new();
+    struct TaskResult {
+        artifact_name: String,
+        result: DownloadArtifactResult,
+    }
+    for artifact in artifacts {
         let sem = sem.clone();
         let client = client.clone();
-        let project = project.clone();
-        let artifact_id = artifact.id;
+        let owner = owner.to_owned();
+        let repo = repo.to_owned();
         set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             TaskResult {
-                artifact_name,
-                result: download_artifact(client, project, artifact_id, version).await,
+                artifact_name: artifact.name,
+                result: download_artifact(client, &owner, &repo, artifact.id, artifact.version)
+                    .await,
             }
         });
     }
@@ -521,7 +584,7 @@ pub async fn process_workflow_run(
                             name,
                             version
                         );
-                        result.artifacts.push(ProcessArtifactResult { version, report });
+                        result.artifacts.push(WorkflowRunArtifact { version, report });
                     }
                 }
             }
@@ -545,14 +608,13 @@ type DownloadArtifactResult = Result<Vec<(String, Box<Report>)>>;
 
 async fn download_artifact(
     client: Octocrab,
-    project: Project,
+    owner: &str,
+    repo: &str,
     artifact_id: ArtifactId,
     version: String,
 ) -> DownloadArtifactResult {
-    let bytes = client
-        .actions()
-        .download_artifact(&project.owner, &project.repo, artifact_id, ArchiveFormat::Zip)
-        .await?;
+    let bytes =
+        client.actions().download_artifact(owner, repo, artifact_id, ArchiveFormat::Zip).await?;
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -636,7 +698,9 @@ pub async fn check_for_reports(
             }
         };
         let run = items.first().unwrap();
-        let result = process_workflow_run(client, project, run.id).await?;
+        let result =
+            fetch_workflow_run_artifacts(client, &project.owner, &project.repo, run.id, None)
+                .await?;
         if !result.artifacts.is_empty() {
             return Ok(workflow_id.to_string());
         }

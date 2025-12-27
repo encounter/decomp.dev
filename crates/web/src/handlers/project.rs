@@ -194,16 +194,15 @@ pub async fn get_projects(
                 return (info, Err(anyhow!("No report version found")));
             };
             let commit = info.commit.as_ref().unwrap();
-            let report = state
-                .db
-                .get_report(&info.project.owner, &info.project.repo, &commit.sha, version)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to fetch report for {}/{} sha {} version {}",
-                        info.project.owner, info.project.repo, commit.sha, version
-                    )
-                });
+            let report =
+                state.db.get_report(info.project.id, &commit.sha, version).await.with_context(
+                    || {
+                        format!(
+                            "Failed to fetch report for {}/{} sha {} version {}",
+                            info.project.owner, info.project.repo, commit.sha, version
+                        )
+                    },
+                );
             (info, report)
         });
     }

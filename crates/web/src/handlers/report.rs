@@ -314,10 +314,7 @@ pub async fn get_report(
     } else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };
-    let Some(report) = state
-        .db
-        .get_report(&project_info.project.owner, &project_info.project.repo, &commit.sha, version)
-        .await?
+    let Some(report) = state.db.get_report(project_info.project.id, &commit.sha, version).await?
     else {
         return Err(AppError::Status(StatusCode::NOT_FOUND));
     };

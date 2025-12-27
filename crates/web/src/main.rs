@@ -16,13 +16,13 @@ use std::{
 use axum::{
     Router,
     extract::{ConnectInfo, FromRef},
-    http::{Method, Request, header},
+    http::{Method, Request, StatusCode, header},
     middleware,
 };
-use decomp_dev_core::config::{Config, GitHubConfig};
+use decomp_dev_core::config::Config;
 use decomp_dev_db::Database;
-use decomp_dev_github::{GitHub, webhook::WebhookState};
-use decomp_dev_jobs::{JobContext, JobStorage, WorkerConfig, create_monitor};
+use decomp_dev_github::GitHub;
+use decomp_dev_jobs::{JobContext, JobStorage, create_monitor};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -40,24 +40,10 @@ use crate::handlers::{build_router, csp::csp_middleware};
 
 #[derive(Clone, FromRef)]
 pub struct AppState {
-    config: Config,
-    db: Database,
-    github: GitHub,
-    jobs: JobStorage,
-}
-
-impl FromRef<AppState> for WebhookState {
-    fn from_ref(state: &AppState) -> Self {
-        Self {
-            config: state.config.github.clone(),
-            db: state.db.clone(),
-            github: state.github.clone(),
-        }
-    }
-}
-
-impl FromRef<AppState> for GitHubConfig {
-    fn from_ref(state: &AppState) -> Self { state.config.github.clone() }
+    config: Arc<Config>,
+    db: Arc<Database>,
+    github: Arc<GitHub>,
+    jobs: Arc<JobStorage>,
 }
 
 #[tokio::main]
@@ -71,17 +57,16 @@ async fn main() {
         )
         .init();
 
-    let config: Config = {
+    let config: Arc<Config> = {
         let file = BufReader::new(File::open("config.yml").expect("Failed to open config file"));
         serde_yaml::from_reader(file).expect("Failed to parse config file")
     };
     let db = Database::new(&config.db).await.expect("Failed to open database");
     let github = GitHub::new(&config.github).await.expect("Failed to create GitHub client");
-
-    // Set up job storage
     let jobs = JobStorage::setup(&db.pool).await.expect("Failed to set up job storage");
 
-    let state = AppState { config, db: db.clone(), github: github.clone(), jobs: jobs.clone() };
+    let job_context = JobContext { config: config.clone(), db: db.clone(), github: github.clone() };
+    let state = AppState { config: config.clone(), db: db.clone(), github, jobs };
 
     // Create session store
     let session_store = SqliteStore::new(db.pool.clone());
@@ -97,16 +82,16 @@ async fn main() {
         .expect("Failed to create scheduler");
 
     // Create the job monitor
-    let job_context = JobContext { config: state.config.clone(), db: state.db.clone(), github };
-    let monitor = create_monitor(jobs, job_context, WorkerConfig::default());
+    let monitor = create_monitor(state.jobs.clone(), job_context, &config.worker);
 
     // Build the router
     let port = state.config.server.port;
     let router = app(state, session_store).into_make_service_with_connect_info::<SocketAddr>();
 
     // Create the listener
+    #[allow(unused_mut)]
     let mut listener = None;
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         use std::os::fd::{FromRawFd, IntoRawFd};
         let fds = libsystemd::activation::receive_descriptors_with_names(false)
@@ -128,7 +113,7 @@ async fn main() {
         }
     };
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Ready])
             .expect("Failed to notify");
@@ -153,7 +138,7 @@ async fn main() {
         tracing::error!("{e}");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         libsystemd::daemon::notify(false, &[libsystemd::daemon::NotifyState::Stopping])
             .expect("Failed to notify");
@@ -174,7 +159,10 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
                 .make_span_with(MyMakeSpan { level: Level::INFO })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .layer(TimeoutLayer::new(Duration::from_secs(120)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(120),
+        ))
         .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
         .layer(
             SessionManagerLayer::new(session_store)
