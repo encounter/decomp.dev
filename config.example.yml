@@ -6,6 +6,7 @@ server:
 
 db:
   url: sqlite:./db.sqlite
+  jobs_url: sqlite:./jobs.sqlite
 
 github:
   # Personal access token for public repo access

@@ -63,7 +63,7 @@ async fn main() {
     };
     let db = Database::new(&config.db).await.expect("Failed to open database");
     let github = GitHub::new(&config.github).await.expect("Failed to create GitHub client");
-    let jobs = JobStorage::setup(&db.pool).await.expect("Failed to set up job storage");
+    let jobs = JobStorage::setup(&config.db).await.expect("Failed to set up job storage");
 
     let job_context = JobContext { config: config.clone(), db: db.clone(), github: github.clone() };
     let state = AppState { config: config.clone(), db: db.clone(), github, jobs };
