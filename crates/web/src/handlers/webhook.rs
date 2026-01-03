@@ -88,21 +88,21 @@ pub async fn webhook(
                 inner.action,
                 owner.as_deref().unwrap_or("[unknown]")
             );
+            let Some(installation_id) = installation_id else {
+                tracing::warn!("Received installation event with no installation ID");
+                return Ok((StatusCode::OK, "No installation ID").into_response());
+            };
             match inner.action {
                 InstallationWebhookEventAction::Created => {
-                    // Installation client is already created
+                    // Create the installation client
+                    let mut installations = installations.lock().await;
+                    installations.client_for_installation(installation_id).await?;
                 }
                 InstallationWebhookEventAction::Deleted => {
                     // Remove the installation client
                     let mut installations = installations.lock().await;
-                    if let Some(installation_id) = installation_id {
-                        installations.repo_to_installation.retain(|_, v| *v != installation_id);
-                        installations.clients.remove(&installation_id);
-                    } else {
-                        tracing::warn!(
-                            "Received installation deleted event with no installation ID"
-                        );
-                    }
+                    installations.repo_to_installation.retain(|_, v| *v != installation_id);
+                    installations.clients.remove(&installation_id);
                 }
                 _ => {}
             }
