@@ -205,9 +205,11 @@ pub enum Platform {
     PS2,     // 2000
     GBA,     // 2001
     GC,      // 2001
+    Xbox,    // 2001
     DS,      // 2004
     Xbox360, // 2005
     Wii,     // 2006
+    _3DS,    // 2011
     Switch,  // 2017
 }
 
@@ -217,9 +219,11 @@ pub const ALL_PLATFORMS: &[Platform] = &[
     Platform::PS2,
     Platform::GBA,
     Platform::GC,
+    Platform::Xbox,
     Platform::DS,
     Platform::Xbox360,
     Platform::Wii,
+    Platform::_3DS,
     Platform::Switch,
 ];
 
@@ -231,9 +235,11 @@ impl Platform {
             Self::PS2 => "ps2",
             Self::GBA => "gba",
             Self::GC => "gc",
+            Self::Xbox => "xbox",
             Self::DS => "nds",
-            Self::Wii => "wii",
             Self::Xbox360 => "xbox360",
+            Self::Wii => "wii",
+            Self::_3DS => "3ds",
             Self::Switch => "switch",
         }
     }
@@ -245,9 +251,11 @@ impl Platform {
             Platform::PS2 => "PlayStation 2",
             Platform::GBA => "Game Boy Advance",
             Platform::GC => "GameCube",
+            Platform::Xbox => "Xbox",
             Platform::DS => "Nintendo DS",
-            Platform::Wii => "Wii",
             Platform::Xbox360 => "Xbox 360",
+            Platform::Wii => "Wii",
+            Platform::_3DS => "Nintendo 3DS",
             Platform::Switch => "Switch",
         }
     }
@@ -263,9 +271,11 @@ impl FromStr for Platform {
             "ps2" => Ok(Self::PS2),
             "gba" => Ok(Self::GBA),
             "gc" => Ok(Self::GC),
+            "xbox" => Ok(Self::Xbox),
             "nds" => Ok(Self::DS),
-            "wii" => Ok(Self::Wii),
             "xbox360" => Ok(Self::Xbox360),
+            "wii" => Ok(Self::Wii),
+            "3ds" => Ok(Self::_3DS),
             "switch" => Ok(Self::Switch),
             _ => Err(()),
         }
