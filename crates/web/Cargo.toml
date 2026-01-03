@@ -8,6 +8,7 @@ default-run = "decomp-dev-web"
 [dependencies]
 anyhow.workspace = true
 apalis.workspace = true
+apalis-board.workspace = true
 axum.workspace = true
 axum_typed_multipart = "0.16"
 decomp-dev-auth = { path = "../auth" }

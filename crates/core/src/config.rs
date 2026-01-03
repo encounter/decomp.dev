@@ -13,6 +13,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     pub port: u16,
+    pub jobs_port: Option<u16>,
     #[serde(default)]
     pub dev_mode: bool,
 }
@@ -64,6 +65,6 @@ pub struct WorkerConfig {
 
 impl Default for WorkerConfig {
     fn default() -> Self {
-        Self { workflow_run_concurrency: 3, refresh_project_concurrency: 1, retry_attempts: 5 }
+        Self { workflow_run_concurrency: 3, refresh_project_concurrency: 3, retry_attempts: 5 }
     }
 }

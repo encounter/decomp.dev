@@ -9,12 +9,18 @@ use std::{
     io::BufReader,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
+use anyhow::Context;
+use apalis_board::axum::{
+    framework::{ApiBuilder, RegisterRoute},
+    sse::{TracingBroadcaster, TracingSubscriber},
+    ui::ServeUI,
+};
 use axum::{
-    Router,
+    Extension, Router,
     extract::{ConnectInfo, FromRef},
     http::{Method, Request, StatusCode, header},
     middleware,
@@ -26,15 +32,18 @@ use decomp_dev_jobs::{JobContext, JobStorage, create_monitor};
 use tokio::{net::TcpListener, signal};
 use tower::ServiceBuilder;
 use tower_http::{
-    ServiceBuilderExt, cors,
-    cors::CorsLayer,
+    ServiceBuilderExt,
+    cors::{self, CorsLayer},
+    normalize_path::NormalizePathLayer,
     timeout::TimeoutLayer,
     trace::{DefaultOnResponse, MakeSpan, TraceLayer},
 };
 use tower_sessions::{Expiry, SessionManagerLayer, SessionStore, cookie::SameSite};
 use tower_sessions_sqlx_store::SqliteStore;
 use tracing::{Level, Span};
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+use tracing_subscriber::{
+    EnvFilter, Layer, filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 use crate::handlers::{build_router, csp::csp_middleware};
 
@@ -48,13 +57,14 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                // Default to info level
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
+    let broadcaster = TracingBroadcaster::create();
+    let env_filter = EnvFilter::builder()
+        // Default to info level
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(env_filter.clone()))
+        .with(TracingSubscriber::new(&broadcaster).layer())
         .init();
 
     let config: Arc<Config> = {
@@ -86,6 +96,8 @@ async fn main() {
 
     // Build the router
     let port = state.config.server.port;
+    let jobs_port = state.config.server.jobs_port;
+    let jobs_router = jobs_app(&state.jobs, broadcaster);
     let router = app(state, session_store).into_make_service_with_connect_info::<SocketAddr>();
 
     // Create the listener
@@ -97,7 +109,7 @@ async fn main() {
         let fds = libsystemd::activation::receive_descriptors_with_names(false)
             .expect("Failed to receive fds");
         if let Some((fd, name)) = fds.into_iter().next() {
-            tracing::info!("Listening on {}", name);
+            tracing::info!("Web server: Listening on {}", name);
             let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd.into_raw_fd()) };
             std_listener.set_nonblocking(true).expect("Failed to set non-blocking");
             listener =
@@ -108,8 +120,19 @@ async fn main() {
         Some(listener) => listener,
         None => {
             let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
-            tracing::info!("Listening on {}", addr);
+            tracing::info!("Web server: Listening on {}", addr);
             TcpListener::bind(addr).await.expect("bind error")
+        }
+    };
+    let jobs_listener = match jobs_port {
+        Some(port) => {
+            let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+            tracing::info!("Jobs server: Listening on {}", addr);
+            Some(TcpListener::bind(addr).await.expect("bind error"))
+        }
+        None => {
+            tracing::info!("Jobs server: Disabled");
+            None
         }
     };
 
@@ -121,20 +144,34 @@ async fn main() {
 
     // Run both the web server and job monitor concurrently, with graceful shutdown
     let web_server = async {
-        axum::serve(listener, router)
+        let result = axum::serve(listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await
-            .map_err(|e| anyhow::anyhow!("Web server error: {e}"))
+            .context("Web server error");
+        tracing::info!("Web server stopped");
+        result
+    };
+    let jobs_server = async {
+        if let Some(jobs_listener) = jobs_listener {
+            let result = axum::serve(jobs_listener, jobs_router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .context("Jobs server error");
+            tracing::info!("Jobs server stopped");
+            result
+        } else {
+            Ok(())
+        }
     };
     let job_monitor = async {
-        monitor
-            .run_with_signal(shutdown_signal_io())
-            .await
-            .map_err(|e| anyhow::anyhow!("Job monitor error: {e}"))
+        let result =
+            monitor.run_with_signal(shutdown_signal_io()).await.context("Job monitor error");
+        tracing::info!("Job monitor stopped");
+        result
     };
 
     // Wait for both to complete gracefully (early return on error)
-    if let Err(e) = tokio::try_join!(web_server, job_monitor) {
+    if let Err(e) = tokio::try_join!(web_server, jobs_server, job_monitor) {
         tracing::error!("{e}");
     }
 
@@ -163,6 +200,7 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(120),
         ))
+        .layer(NormalizePathLayer::trim_trailing_slash())
         .layer(CorsLayer::new().allow_methods([Method::GET]).allow_origin(cors::Any))
         .layer(
             SessionManagerLayer::new(session_store)
@@ -172,13 +210,27 @@ fn app(state: AppState, session_store: impl SessionStore + Clone) -> Router {
         )
         .layer(middleware::from_fn(csp_middleware))
         .compression();
-    let router = build_router();
+    let router = build_router().with_state(state);
     #[cfg(debug_assertions)]
     let router = router.layer(tower_livereload::LiveReloadLayer::new());
-    router.layer(middleware).with_state(state)
+    router.layer(middleware)
 }
 
-async fn shutdown_signal() { shutdown_signal_io().await.ok(); }
+fn jobs_app(jobs: &JobStorage, broadcaster: Arc<Mutex<TracingBroadcaster>>) -> Router {
+    let middleware =
+        ServiceBuilder::new().layer(NormalizePathLayer::trim_trailing_slash()).compression();
+    let api = ApiBuilder::new(Router::new())
+        .register(jobs.workflow_run())
+        .register(jobs.refresh_project())
+        .build();
+    Router::new()
+        .nest("/api/v1", api)
+        .fallback_service(ServeUI::new())
+        .layer(Extension(broadcaster))
+        .layer(middleware)
+}
+
+async fn shutdown_signal() { shutdown_signal_io().await.unwrap() }
 
 /// Shutdown signal that returns io::Result for apalis compatibility.
 async fn shutdown_signal_io() -> std::io::Result<()> {

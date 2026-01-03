@@ -93,9 +93,9 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "apalis"
-version = "1.0.0-beta.2"
+version = "1.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6556b89bb5cb40dab6e4d7ee1f2abfef6d372bd3aef300a3faa992bcb13bda8"
+checksum = "f93be0eb33b912f5e66004d0b756423c285273259068b1c80a71d7842658189b"
 dependencies = [
  "apalis-core",
  "futures-util",
@@ -106,10 +106,59 @@ dependencies = [
 ]
 
 [[package]]
-name = "apalis-core"
-version = "1.0.0-beta.2"
+name = "apalis-board"
+version = "1.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49039d4eb476cc05e196210153dbb34be180de9a0ef8b7a666fde0f80c5c357d"
+checksum = "eae7f45f6f1150f5deac364df7a118e3087adbc18a78267b5b93e143cbf2ab0d"
+dependencies = [
+ "apalis-board-api",
+]
+
+[[package]]
+name = "apalis-board-api"
+version = "1.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73630d08d0c01b1b9f4d74f22171b53a904289f1907e606d41759566f6ac642f"
+dependencies = [
+ "apalis-board-types",
+ "apalis-core",
+ "axum",
+ "futures",
+ "include_dir",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "apalis-board-types"
+version = "1.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7cd2f7fb89d1aeb2e2f1c4a9c35e23a394566e957bd634074c2180a55a97c1c"
+dependencies = [
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "apalis-codec"
+version = "0.1.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5ed6bb8e64c360ed4ad666a6cbc42e9e6df73087461dc4071f510a3af284637"
+dependencies = [
+ "apalis-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apalis-core"
+version = "1.0.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1557d680ee4a9b42a76ab3a9572cee1a00d45e7eb455427d906c42774766e7"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -118,7 +167,6 @@ dependencies = [
  "futures-util",
  "pin-project",
  "serde",
- "serde_json",
  "thiserror 2.0.17",
  "tower-layer",
  "tower-service",
@@ -127,9 +175,9 @@ dependencies = [
 
 [[package]]
 name = "apalis-cron"
-version = "1.0.0-beta.2"
+version = "1.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53230aa8a09cdbe2e254d1b59999efe9f1cad09b66d48475f51b3fb38be6b840"
+checksum = "d82cc92dc7b6c48c29f308379c6095d82738ebe0831d9bfb27b8a1a8988ee981"
 dependencies = [
  "apalis-core",
  "chrono",
@@ -141,9 +189,9 @@ dependencies = [
 
 [[package]]
 name = "apalis-sql"
-version = "1.0.0-beta.2"
+version = "1.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "604ed96ae8ff20d4c6f8533ffc9f8c91c5f99da6bc564de6a37b94829522f9ec"
+checksum = "5ade5d8faa60e9975b01d3bb1ebc5028589aa4986365eaa4d080d30ed3b5141f"
 dependencies = [
  "apalis-core",
  "chrono",
@@ -154,10 +202,11 @@ dependencies = [
 
 [[package]]
 name = "apalis-sqlite"
-version = "1.0.0-beta.4"
+version = "1.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be443bddc6ba6e023b8364304def0a6e3428f258b5addf5aa74bcb5688eb3d1"
+checksum = "fd43020ce13d6cb8c8d8c09657a6691d8490cd1ce0d8bc0f7fef8bf9b23cfe86"
 dependencies = [
+ "apalis-codec",
  "apalis-core",
  "apalis-sql",
  "chrono",
@@ -174,9 +223,9 @@ dependencies = [
 
 [[package]]
 name = "apalis-workflow"
-version = "0.1.0-beta.2"
+version = "0.1.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afa1869ce395c0b727315a2be39508eb77ef94ed75492e7b43334b13241b1afa"
+checksum = "bc024da2d5d3ab59cc9fea099a2e2b20de5ff608f2e287abcb73aa45e4966a89"
 dependencies = [
  "apalis-core",
  "futures",
@@ -1104,6 +1153,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apalis",
+ "apalis-codec",
  "apalis-cron",
  "apalis-sqlite",
  "apalis-workflow",
@@ -1125,6 +1175,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "apalis",
+ "apalis-board",
  "axum",
  "axum_typed_multipart",
  "bytes",
@@ -2159,6 +2210,25 @@ name = "imgref"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c5cedc30da3a610cac6b4ba17597bdf7152cf974e8aab3afb3d54455e371c8"
+
+[[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "indexmap"
@@ -4926,6 +4996,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
 name = "tracing-subscriber"
 version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4935,12 +5015,15 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

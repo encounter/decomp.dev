@@ -6,9 +6,10 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-apalis.workspace = true
+apalis-codec.workspace = true
 apalis-cron.workspace = true
 apalis-sqlite.workspace = true
+apalis.workspace = true
 apalis-workflow = "0.1.0-beta.2"
 decomp-dev-core = { path = "../core" }
 decomp-dev-db = { path = "../db" }
