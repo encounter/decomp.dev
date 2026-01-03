@@ -225,9 +225,15 @@ async fn process_workflow_run_pull_request(
             .await
             .context("Failed to process workflow run")?;
 
-    // if result.artifacts.is_empty() {
-    //     return Ok(());
-    // }
+    tracing::debug!(
+        "Processed workflow run {} ({}) (artifacts {})",
+        job.run_id,
+        job.head_commit.sha,
+        result.artifacts.len()
+    );
+    if result.artifacts.is_empty() {
+        return Ok(());
+    }
 
     let mut version_comments = Vec::new();
 
