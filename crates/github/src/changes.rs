@@ -195,8 +195,8 @@ impl ChangeKind {
         match self {
             ChangeKind::NewMatch => "new match",
             ChangeKind::BrokenMatch => "broken match",
-            ChangeKind::Improvement => "improvement in unmatched functions",
-            ChangeKind::Regression => "regression in unmatched functions",
+            ChangeKind::Improvement => "improvement in an unmatched item",
+            ChangeKind::Regression => "regression in an unmatched item",
         }
     }
 
@@ -204,8 +204,8 @@ impl ChangeKind {
         match self {
             ChangeKind::NewMatch => "new matches",
             ChangeKind::BrokenMatch => "broken matches",
-            ChangeKind::Improvement => "improvements in unmatched functions",
-            ChangeKind::Regression => "regressions in unmatched functions",
+            ChangeKind::Improvement => "improvements in unmatched items",
+            ChangeKind::Regression => "regressions in unmatched items",
         }
     }
 }
