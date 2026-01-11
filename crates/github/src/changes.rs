@@ -17,8 +17,8 @@ pub fn generate_changes(previous: &Report, current: &Report) -> Result<Changes> 
     let mut changes = Changes { from: previous.measures, to: current.measures, units: vec![] };
     for prev_unit in &previous.units {
         let curr_unit = current.units.iter().find(|u| u.name == prev_unit.name);
-        let sections = process_items(prev_unit, curr_unit, |u| &u.sections);
-        let functions = process_items(prev_unit, curr_unit, |u| &u.functions);
+        let sections = process_items(prev_unit, curr_unit, |u| &u.sections, false);
+        let functions = process_items(prev_unit, curr_unit, |u| &u.functions, true);
 
         let prev_measures = prev_unit.measures;
         let curr_measures = curr_unit.and_then(|u| u.measures);
@@ -55,6 +55,7 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
     prev_unit: &ReportUnit,
     curr_unit: Option<&ReportUnit>,
     getter: F,
+    pair_by_virtual_address: bool,
 ) -> Vec<ChangeItem> {
     let prev_items = getter(prev_unit);
     let mut items = vec![];
@@ -65,9 +66,13 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
             let prev_func_address = prev_func.metadata.as_ref().and_then(|m| m.virtual_address);
             let curr_func = curr_items.iter().find(|f| {
                 f.name == prev_func.name
-                    || prev_func_address.is_some_and(|a| {
-                        f.metadata.as_ref().and_then(|m| m.virtual_address).is_some_and(|b| a == b)
-                    })
+                    || (pair_by_virtual_address
+                        && prev_func_address.is_some_and(|a| {
+                            f.metadata
+                                .as_ref()
+                                .and_then(|m| m.virtual_address)
+                                .is_some_and(|b| a == b)
+                        }))
             });
             if let Some(curr_func) = curr_func {
                 let curr_func_info = ChangeItemInfo::from(curr_func);
@@ -92,9 +97,13 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
             let curr_func_address = curr_func.metadata.as_ref().and_then(|m| m.virtual_address);
             if !prev_items.iter().any(|f| {
                 f.name == curr_func.name
-                    || curr_func_address.is_some_and(|a| {
-                        f.metadata.as_ref().and_then(|m| m.virtual_address).is_some_and(|b| a == b)
-                    })
+                    || (pair_by_virtual_address
+                        && curr_func_address.is_some_and(|a| {
+                            f.metadata
+                                .as_ref()
+                                .and_then(|m| m.virtual_address)
+                                .is_some_and(|b| a == b)
+                        }))
             }) {
                 items.push(ChangeItem {
                     name: curr_func.name.clone(),
