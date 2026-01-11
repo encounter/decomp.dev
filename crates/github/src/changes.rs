@@ -61,44 +61,44 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
     let mut items = vec![];
     if let Some(curr_unit) = curr_unit {
         let curr_items = getter(curr_unit);
-        for prev_func in prev_items {
-            let prev_func_info = ChangeItemInfo::from(prev_func);
-            let prev_func_address = prev_func.metadata.as_ref().and_then(|m| m.virtual_address);
-            let curr_func = curr_items.iter().find(|f| {
-                f.name == prev_func.name
+        for prev_item in prev_items {
+            let prev_item_info = ChangeItemInfo::from(prev_item);
+            let prev_item_address = prev_item.metadata.as_ref().and_then(|m| m.virtual_address);
+            let curr_item = curr_items.iter().find(|f| {
+                f.name == prev_item.name
                     || (pair_by_virtual_address
-                        && prev_func_address.is_some_and(|a| {
+                        && prev_item_address.is_some_and(|a| {
                             f.metadata
                                 .as_ref()
                                 .and_then(|m| m.virtual_address)
                                 .is_some_and(|b| a == b)
                         }))
             });
-            if let Some(curr_func) = curr_func {
-                let curr_func_info = ChangeItemInfo::from(curr_func);
-                if prev_func_info != curr_func_info {
+            if let Some(curr_item) = curr_item {
+                let curr_item_info = ChangeItemInfo::from(curr_item);
+                if prev_item_info != curr_item_info {
                     items.push(ChangeItem {
-                        name: curr_func.name.clone(),
-                        from: Some(prev_func_info),
-                        to: Some(curr_func_info),
-                        metadata: curr_func.metadata.clone(),
+                        name: curr_item.name.clone(),
+                        from: Some(prev_item_info),
+                        to: Some(curr_item_info),
+                        metadata: curr_item.metadata.clone(),
                     });
                 }
             } else {
                 items.push(ChangeItem {
-                    name: prev_func.name.clone(),
-                    from: Some(prev_func_info),
+                    name: prev_item.name.clone(),
+                    from: Some(prev_item_info),
                     to: None,
-                    metadata: prev_func.metadata.clone(),
+                    metadata: prev_item.metadata.clone(),
                 });
             }
         }
-        for curr_func in curr_items {
-            let curr_func_address = curr_func.metadata.as_ref().and_then(|m| m.virtual_address);
+        for curr_item in curr_items {
+            let curr_item_address = curr_item.metadata.as_ref().and_then(|m| m.virtual_address);
             if !prev_items.iter().any(|f| {
-                f.name == curr_func.name
+                f.name == curr_item.name
                     || (pair_by_virtual_address
-                        && curr_func_address.is_some_and(|a| {
+                        && curr_item_address.is_some_and(|a| {
                             f.metadata
                                 .as_ref()
                                 .and_then(|m| m.virtual_address)
@@ -106,20 +106,20 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
                         }))
             }) {
                 items.push(ChangeItem {
-                    name: curr_func.name.clone(),
+                    name: curr_item.name.clone(),
                     from: None,
-                    to: Some(ChangeItemInfo::from(curr_func)),
-                    metadata: curr_func.metadata.clone(),
+                    to: Some(ChangeItemInfo::from(curr_item)),
+                    metadata: curr_item.metadata.clone(),
                 });
             }
         }
     } else {
-        for prev_func in prev_items {
+        for prev_item in prev_items {
             items.push(ChangeItem {
-                name: prev_func.name.clone(),
-                from: Some(ChangeItemInfo::from(prev_func)),
+                name: prev_item.name.clone(),
+                from: Some(ChangeItemInfo::from(prev_item)),
                 to: None,
-                metadata: prev_func.metadata.clone(),
+                metadata: prev_item.metadata.clone(),
             });
         }
     }
