@@ -77,6 +77,7 @@ pub struct ReportTemplateUnit<'a> {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    pub is_linked: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -584,6 +585,7 @@ fn apply_scope<'a>(
     }
     let (w, h) = query.size();
     let mut units = if let Some(unit) = current_unit {
+        let linked = unit.metadata.as_ref().is_some_and(|m| m.complete.is_some_and(|c| c));
         unit.functions
             .iter()
             .filter_map(|f| {
@@ -603,6 +605,7 @@ fn apply_scope<'a>(
                     y: 0.0,
                     w: 0.0,
                     h: 0.0,
+                    is_linked: linked,
                 })
             })
             .collect::<Vec<_>>()
@@ -633,6 +636,10 @@ fn apply_scope<'a>(
                     y: 0.0,
                     w: 0.0,
                     h: 0.0,
+                    is_linked: unit
+                        .metadata
+                        .as_ref()
+                        .is_some_and(|m| m.complete.is_some_and(|c| c)),
                 })
             })
             .collect::<Vec<_>>()

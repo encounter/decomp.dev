@@ -409,7 +409,14 @@ const SPECIAL_TERM_REGEXP = new RegExp(
 );
 
 const checkFilterTermMatches = (term: string, unit: Unit): boolean => {
+  if (term === "is:linked") {
+    return unit.is_linked;
+  } else if (term === "is:unlinked") {
+    return !unit.is_linked;
+  }
+  
   const match = term.match(SPECIAL_TERM_REGEXP);
+
   if (match) {
     // Filter based on match percent or size.
     const operator = match[1];
