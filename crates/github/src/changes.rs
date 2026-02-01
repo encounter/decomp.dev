@@ -17,8 +17,8 @@ pub fn generate_changes(previous: &Report, current: &Report) -> Result<Changes> 
     let mut changes = Changes { from: previous.measures, to: current.measures, units: vec![] };
     for prev_unit in &previous.units {
         let curr_unit = current.units.iter().find(|u| u.name == prev_unit.name);
-        let sections = process_items(prev_unit, curr_unit, |u| &u.sections);
-        let functions = process_items(prev_unit, curr_unit, |u| &u.functions);
+        let sections = process_items(prev_unit, curr_unit, |u| &u.sections, false);
+        let functions = process_items(prev_unit, curr_unit, |u| &u.functions, true);
 
         let prev_measures = prev_unit.measures;
         let curr_measures = curr_unit.and_then(|u| u.measures);
@@ -55,62 +55,71 @@ fn process_items<F: Fn(&ReportUnit) -> &Vec<ReportItem>>(
     prev_unit: &ReportUnit,
     curr_unit: Option<&ReportUnit>,
     getter: F,
+    pair_by_virtual_address: bool,
 ) -> Vec<ChangeItem> {
     let prev_items = getter(prev_unit);
     let mut items = vec![];
     if let Some(curr_unit) = curr_unit {
         let curr_items = getter(curr_unit);
-        for prev_func in prev_items {
-            let prev_func_info = ChangeItemInfo::from(prev_func);
-            let prev_func_address = prev_func.metadata.as_ref().and_then(|m| m.virtual_address);
-            let curr_func = curr_items.iter().find(|f| {
-                f.name == prev_func.name
-                    || prev_func_address.is_some_and(|a| {
-                        f.metadata.as_ref().and_then(|m| m.virtual_address).is_some_and(|b| a == b)
-                    })
+        for prev_item in prev_items {
+            let prev_item_info = ChangeItemInfo::from(prev_item);
+            let prev_item_address = prev_item.metadata.as_ref().and_then(|m| m.virtual_address);
+            let curr_item = curr_items.iter().find(|f| {
+                f.name == prev_item.name
+                    || (pair_by_virtual_address
+                        && prev_item_address.is_some_and(|a| {
+                            f.metadata
+                                .as_ref()
+                                .and_then(|m| m.virtual_address)
+                                .is_some_and(|b| a == b)
+                        }))
             });
-            if let Some(curr_func) = curr_func {
-                let curr_func_info = ChangeItemInfo::from(curr_func);
-                if prev_func_info != curr_func_info {
+            if let Some(curr_item) = curr_item {
+                let curr_item_info = ChangeItemInfo::from(curr_item);
+                if prev_item_info != curr_item_info {
                     items.push(ChangeItem {
-                        name: curr_func.name.clone(),
-                        from: Some(prev_func_info),
-                        to: Some(curr_func_info),
-                        metadata: curr_func.metadata.clone(),
+                        name: curr_item.name.clone(),
+                        from: Some(prev_item_info),
+                        to: Some(curr_item_info),
+                        metadata: curr_item.metadata.clone(),
                     });
                 }
             } else {
                 items.push(ChangeItem {
-                    name: prev_func.name.clone(),
-                    from: Some(prev_func_info),
+                    name: prev_item.name.clone(),
+                    from: Some(prev_item_info),
                     to: None,
-                    metadata: prev_func.metadata.clone(),
+                    metadata: prev_item.metadata.clone(),
                 });
             }
         }
-        for curr_func in curr_items {
-            let curr_func_address = curr_func.metadata.as_ref().and_then(|m| m.virtual_address);
+        for curr_item in curr_items {
+            let curr_item_address = curr_item.metadata.as_ref().and_then(|m| m.virtual_address);
             if !prev_items.iter().any(|f| {
-                f.name == curr_func.name
-                    || curr_func_address.is_some_and(|a| {
-                        f.metadata.as_ref().and_then(|m| m.virtual_address).is_some_and(|b| a == b)
-                    })
+                f.name == curr_item.name
+                    || (pair_by_virtual_address
+                        && curr_item_address.is_some_and(|a| {
+                            f.metadata
+                                .as_ref()
+                                .and_then(|m| m.virtual_address)
+                                .is_some_and(|b| a == b)
+                        }))
             }) {
                 items.push(ChangeItem {
-                    name: curr_func.name.clone(),
+                    name: curr_item.name.clone(),
                     from: None,
-                    to: Some(ChangeItemInfo::from(curr_func)),
-                    metadata: curr_func.metadata.clone(),
+                    to: Some(ChangeItemInfo::from(curr_item)),
+                    metadata: curr_item.metadata.clone(),
                 });
             }
         }
     } else {
-        for prev_func in prev_items {
+        for prev_item in prev_items {
             items.push(ChangeItem {
-                name: prev_func.name.clone(),
-                from: Some(ChangeItemInfo::from(prev_func)),
+                name: prev_item.name.clone(),
+                from: Some(ChangeItemInfo::from(prev_item)),
                 to: None,
-                metadata: prev_func.metadata.clone(),
+                metadata: prev_item.metadata.clone(),
             });
         }
     }
@@ -195,8 +204,8 @@ impl ChangeKind {
         match self {
             ChangeKind::NewMatch => "new match",
             ChangeKind::BrokenMatch => "broken match",
-            ChangeKind::Improvement => "improvement in unmatched functions",
-            ChangeKind::Regression => "regression in unmatched functions",
+            ChangeKind::Improvement => "improvement in an unmatched item",
+            ChangeKind::Regression => "regression in an unmatched item",
         }
     }
 
@@ -204,8 +213,8 @@ impl ChangeKind {
         match self {
             ChangeKind::NewMatch => "new matches",
             ChangeKind::BrokenMatch => "broken matches",
-            ChangeKind::Improvement => "improvements in unmatched functions",
-            ChangeKind::Regression => "regressions in unmatched functions",
+            ChangeKind::Improvement => "improvements in unmatched items",
+            ChangeKind::Regression => "regressions in unmatched items",
         }
     }
 }
