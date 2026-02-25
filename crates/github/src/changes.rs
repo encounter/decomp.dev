@@ -194,7 +194,7 @@ impl ChangeKind {
     fn emoji(self) -> &'static str {
         match self {
             ChangeKind::NewMatch => "✅",
-            ChangeKind::BrokenMatch => "💔",
+            ChangeKind::BrokenMatch => "🥀",
             ChangeKind::Improvement => "📈",
             ChangeKind::Regression => "📉",
         }
