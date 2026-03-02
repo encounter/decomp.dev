@@ -250,8 +250,11 @@ pub async fn refresh_project(
         .await
         .context("Failed to fetch project info")?
         .with_context(|| format!("Failed to fetch project info for ID {repo_id}"))?;
-    let repo = client_override
-        .unwrap_or(&github.client)
+    let client = match client_override {
+        Some(client) => client.clone(),
+        None => github.client_for(repo_id).await?,
+    };
+    let repo = client
         .repos_by_id(project_info.project.id)
         .get()
         .await
@@ -277,10 +280,6 @@ pub async fn refresh_project(
 
     let project = &project_info.project;
     tracing::debug!("Refreshing project {}/{}", project.owner, project.repo);
-    let client = match client_override {
-        Some(client) => client.clone(),
-        None => github.client_for(repo_id).await?,
-    };
 
     let workflow_ids = if let Some(workflow_id) = &project.workflow_id {
         vec![workflow_id.clone()]
