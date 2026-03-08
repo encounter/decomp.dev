@@ -250,7 +250,7 @@ impl Platform {
     pub fn name(self) -> &'static str {
         match self {
             Platform::PS => "PlayStation",
-            Platform::Win32 => "Windows 9x",
+            Platform::Win32 => "Windows",
             Platform::N64 => "Nintendo 64",
             Platform::PS2 => "PlayStation 2",
             Platform::GBA => "Game Boy Advance",
