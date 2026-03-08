@@ -208,6 +208,7 @@ pub enum Platform {
     GC,      // 2001
     Xbox,    // 2001
     DS,      // 2004
+    PSP,     // 2004
     Xbox360, // 2005
     Wii,     // 2006
     _3DS,    // 2011
@@ -223,6 +224,7 @@ pub const ALL_PLATFORMS: &[Platform] = &[
     Platform::GC,
     Platform::Xbox,
     Platform::DS,
+    Platform::PSP,
     Platform::Xbox360,
     Platform::Wii,
     Platform::_3DS,
@@ -240,6 +242,7 @@ impl Platform {
             Self::GC => "gc",
             Self::Xbox => "xbox",
             Self::DS => "nds",
+            Self::PSP => "psp",
             Self::Xbox360 => "xbox360",
             Self::Wii => "wii",
             Self::_3DS => "3ds",
@@ -257,6 +260,7 @@ impl Platform {
             Platform::GC => "GameCube",
             Platform::Xbox => "Xbox",
             Platform::DS => "Nintendo DS",
+            Platform::PSP => "PlayStation Portable",
             Platform::Xbox360 => "Xbox 360",
             Platform::Wii => "Wii",
             Platform::_3DS => "Nintendo 3DS",
@@ -278,6 +282,7 @@ impl FromStr for Platform {
             "gc" => Ok(Self::GC),
             "xbox" => Ok(Self::Xbox),
             "nds" => Ok(Self::DS),
+            "psp" => Ok(Self::PSP),
             "xbox360" => Ok(Self::Xbox360),
             "wii" => Ok(Self::Wii),
             "3ds" => Ok(Self::_3DS),
