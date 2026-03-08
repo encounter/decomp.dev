@@ -15,11 +15,11 @@ pub async fn create(
 ) -> Result<Scheduler> {
     let sched = JobScheduler::new().await?;
 
-    // Every 10 minutes: Queue partial refresh jobs for projects without active installations
+    // Every 30 minutes: Queue partial refresh jobs for projects without active installations
     {
         let state = state.clone();
         sched
-            .add(Job::new_async("every 10 minutes", move |_uuid, _l| {
+            .add(Job::new_async("every 30 minutes", move |_uuid, _l| {
                 let state = state.clone();
                 Box::pin(async move {
                     if let Err(e) = queue_refresh_jobs(&state, false).await {
