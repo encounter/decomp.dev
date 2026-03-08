@@ -201,6 +201,7 @@ pub struct FrogressMapping {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Platform {
     PS,      // 1994
+    Win32,   // 1995
     N64,     // 1996
     PS2,     // 2000
     GBA,     // 2001
@@ -215,6 +216,7 @@ pub enum Platform {
 
 pub const ALL_PLATFORMS: &[Platform] = &[
     Platform::PS,
+    Platform::Win32,
     Platform::N64,
     Platform::PS2,
     Platform::GBA,
@@ -231,6 +233,7 @@ impl Platform {
     pub fn to_str(self) -> &'static str {
         match self {
             Self::PS => "ps",
+            Self::Win32 => "win32",
             Self::N64 => "n64",
             Self::PS2 => "ps2",
             Self::GBA => "gba",
@@ -247,6 +250,7 @@ impl Platform {
     pub fn name(self) -> &'static str {
         match self {
             Platform::PS => "PlayStation",
+            Platform::Win32 => "Windows",
             Platform::N64 => "Nintendo 64",
             Platform::PS2 => "PlayStation 2",
             Platform::GBA => "Game Boy Advance",
@@ -267,6 +271,7 @@ impl FromStr for Platform {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ps" => Ok(Self::PS),
+            "win32" => Ok(Self::Win32),
             "n64" => Ok(Self::N64),
             "ps2" => Ok(Self::PS2),
             "gba" => Ok(Self::GBA),

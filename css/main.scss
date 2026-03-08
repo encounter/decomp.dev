@@ -180,6 +180,7 @@ $breakpoints: (
 .icon-xbox360:before { content: '\ea08'; }
 .icon-3ds:before { content: '\ea09'; }
 .icon-xbox:before { content: '\ea0a'; }
+.icon-win32:before { content: '\ea0b'; }
 
 // Override the tooltip component
 [data-tooltip]:not(a, button, input) {
