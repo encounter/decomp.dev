@@ -115,7 +115,13 @@ pub fn create_monitor(
                 .retry(retry1.clone())
                 .enable_tracing()
                 .catch_panic()
+                .on_event(|_c, e| {
+                    if let Some(err) = e.as_error() {
+                        tracing::error!("Error processing refresh project job: {err:?}");
+                    }
+                })
                 .concurrency(workflow_run_concurrency)
+                .parallelize(tokio::spawn)
                 .data(ctx1.clone())
                 .build(process_workflow_run_job)
         })
@@ -125,7 +131,13 @@ pub fn create_monitor(
                 .retry(retry2.clone())
                 .enable_tracing()
                 .catch_panic()
+                .on_event(|_c, e| {
+                    if let Some(err) = e.as_error() {
+                        tracing::error!("Error processing refresh project job: {err:?}");
+                    }
+                })
                 .concurrency(refresh_project_concurrency)
+                .parallelize(tokio::spawn)
                 .data(ctx2.clone())
                 .build(process_refresh_project_job)
         })
