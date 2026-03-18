@@ -4,7 +4,7 @@ pub mod webhook;
 
 use std::{
     collections::{HashMap, HashSet, hash_map::Entry},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io::{Cursor, Read},
     pin::pin,
     sync::{Arc, OnceLock},
@@ -615,12 +615,14 @@ async fn download_artifact(
     let bytes =
         client.actions().download_artifact(owner, repo, artifact_id, ArchiveFormat::Zip).await?;
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+    let version_report = OsString::from(format!("{}_report", version));
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
         let Some(path) = file.enclosed_name() else {
             continue;
         };
         if path.file_stem() == Some(OsStr::new("report"))
+            || path.file_stem() == Some(&version_report)
             || path.file_stem() == Some(OsStr::new("progress"))
         {
             let mut contents = Vec::with_capacity(file.size() as usize);
